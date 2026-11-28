@@ -38,6 +38,7 @@ export interface TestDaemonAccount {
 }
 
 export interface TestDaemonOpts {
+  terminalTranscriptRoots?: BootDaemonOpts['terminalTranscriptRoots']
   tokenRegistry?: BootDaemonOpts['tokenRegistry']
   makeCheckupTurn?: BootDaemonOpts['makeCheckupTurn']
   claudeScript?: FakeSdkScript
@@ -147,7 +148,7 @@ export interface DaemonHandle {
   ilink: FakeIlinkHandle
   stateDir: string
   /** Enqueue a text inbound from chatId (default to_user_id is 'bot1'). */
-  sendText(chatId: string, text: string, opts?: { contextToken?: string; createTimeMs?: number; toUserId?: string; quote?: string }): void
+  sendText(chatId: string, text: string, opts?: { contextToken?: string; createTimeMs?: number; toUserId?: string; quote?: string; quoteTitle?: string }): void
   /**
    * Enqueue an image inbound (RawUpdate type=2). The fake-media stub
    * materializes a 3-byte stub file at <stateDir>/inbox/<chatId>/, and
@@ -319,7 +320,7 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
   // NOTE: import is dynamic so vi.mock has time to register before SDK loads.
   const { bootDaemon } = await import('../main')
   // 一件事的提议(S3b)判「人在不在电脑前」、自己弹桌面通知:测试里不去探跑测试那台机器的真键鼠、也不真弹系统通知
-  const daemonHandle = await bootDaemon({ stateDir, dangerously: opts.dangerously ?? false, ...(opts.tokenRegistry ? { tokenRegistry: opts.tokenRegistry } : {}), ...(opts.makeCheckupTurn ? { makeCheckupTurn: opts.makeCheckupTurn } : {}), ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}), ...(opts.scheduledJobsIntervalMs !== undefined ? { scheduledJobsIntervalMs: opts.scheduledJobsIntervalMs } : {}), ...(opts.reminderIntervalMs !== undefined ? { reminderIntervalMs: opts.reminderIntervalMs } : {}), machineIdle: async () => opts.machineIdleS ?? null, desktopNotify: async () => true, ...(opts.escalateAfterMs !== undefined ? { escalateAfterMs: opts.escalateAfterMs } : {}) })
+  const daemonHandle = await bootDaemon({ stateDir, dangerously: opts.dangerously ?? false, ...(opts.terminalTranscriptRoots ? { terminalTranscriptRoots: opts.terminalTranscriptRoots } : {}), ...(opts.tokenRegistry ? { tokenRegistry: opts.tokenRegistry } : {}), ...(opts.makeCheckupTurn ? { makeCheckupTurn: opts.makeCheckupTurn } : {}), ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}), ...(opts.scheduledJobsIntervalMs !== undefined ? { scheduledJobsIntervalMs: opts.scheduledJobsIntervalMs } : {}), ...(opts.reminderIntervalMs !== undefined ? { reminderIntervalMs: opts.reminderIntervalMs } : {}), machineIdle: async () => opts.machineIdleS ?? null, desktopNotify: async () => true, ...(opts.escalateAfterMs !== undefined ? { escalateAfterMs: opts.escalateAfterMs } : {}) })
 
   // Give polling loop a moment to spin up.
   await new Promise(r => setTimeout(r, 50))
@@ -340,6 +341,7 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
         item_list: [{
           type: 1, msg_id: `m${nextMessageId()}`, text_item: { text },
           ...(sendOpts?.quote !== undefined ? { ref_msg: { message_item: { type: 1, text_item: { text: sendOpts.quote } } } } : {}),
+          ...(sendOpts?.quoteTitle !== undefined ? { ref_msg: { title: sendOpts.quoteTitle } } : {}),
         }],
         // Mirror real ilink: every inbound carries context_token. Tests that
         // want to exercise the missing-token path can pass `contextToken: ''`

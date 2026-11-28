@@ -75,14 +75,16 @@ export function terminalOwnerHandlers(deps: TerminalPhoneRoutesDeps): Record<str
       if (req.method !== 'POST') return json({ ok: false, error: 'method_not_allowed' }, 405)
       if (!deps.cliActions) return json({ ok: false, error: 'cli_actions_not_wired' }, 503)
       const b = await bodyOf(req)
-      const hash = b?.['hash'], sessionId = b?.['session_id'], decision = b?.['decision']
+      const hash = b?.['hash'], sessionId = b?.['session_id'], decision = b?.['decision'], remember = b?.['remember']
       if (!b || (decision !== 'allow' && decision !== 'deny')
+        || (remember !== undefined && (remember !== true || decision !== 'allow' || !hash || !sessionId))
         || (hash !== undefined && (typeof hash !== 'string' || !HASH_RE.test(hash)))
         || (sessionId !== undefined && (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)))
         || (hash === undefined && sessionId === undefined)) return json({ ok: false, error: 'invalid' }, 400)
       try {
-        const r = deps.cliActions.permission({ ...(typeof hash === 'string' ? { hash } : {}), ...(typeof sessionId === 'string' ? { session_id: sessionId } : {}) }, decision)
-        if (r.ok) return json({ ok: true })
+        const target = { ...(typeof hash === 'string' ? { hash } : {}), ...(typeof sessionId === 'string' ? { session_id: sessionId } : {}) }
+        const r = remember ? deps.cliActions.permission(target, decision, true) : deps.cliActions.permission(target, decision)
+        if (r.ok) return json(r)
         return json({ ok: false, error: r.error }, r.error === 'not_found' ? 404 : 409)
       } catch { return json({ ok: false, error: 'unavailable' }, 503) }
     }),

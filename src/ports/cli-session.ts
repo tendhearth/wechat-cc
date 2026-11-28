@@ -1,3 +1,4 @@
+import type { TerminalLocation } from '@wechat-cc/protocol'
 import { type PermissionDisplay } from '@wechat-cc/protocol'
 /**
  * 终端会话登记处的口(架构终态 E5):库里一行、对外的一条、身份、store。实现在
@@ -15,6 +16,7 @@ export interface CliSessionRow {
   source: CliSource
   cwd: string
   machine: string | null
+  terminal_json?: string | null
   transcript_path: string | null
   origin_agent: string | null
   status: CliSessionStatus
@@ -28,6 +30,7 @@ export interface CliSessionRow {
   pending_cwd?: string | null
   pending_truncated?: number | null
   created_at: number
+  unhooked?: 1 | null
 }
 
 /** 对外(内部 API / 手机)的一条:状态已按 stale 规则折算。 */
@@ -47,6 +50,7 @@ export interface CliSessionView {
   last_event_at: number
   last_prompt_at: number | null
   created_at: number
+  unhooked?: true
   /** 等批准的那一项;只在 status='waiting' 时有。 */
   pending: { tool: string; summary: string | null; since: number; display?: PermissionDisplay; cwd?: string; truncated?: boolean } | null
   /** 这条会话的那件事(kind='terminal',M4a 起);还没有 ⇒ 不带。App 的终端行点进 /matter/<id>(M4c)。 */
@@ -58,8 +62,15 @@ export interface CliSessionIdentity {
   source: CliSource
   cwd: string
   machine?: string | undefined
+  terminal?: TerminalLocation | undefined
   transcript_path?: string | undefined
   origin_agent?: string | undefined
+}
+
+export interface CliSessionListOptions {
+  includeEnded?: boolean
+  includeUnhooked?: boolean
+  limit?: number
 }
 
 export interface CliSessionStore {
@@ -71,6 +82,6 @@ export interface CliSessionStore {
   /** 按会话 id 前缀找(不分大小写),不含已结束的;多条命中取最近有事件的。 */
   findByPrefix(prefix: string): CliSessionRow | null
   /** 最近有事件的在前。 */
-  list(opts?: { includeEnded?: boolean; limit?: number }): CliSessionRow[]
+  list(opts?: CliSessionListOptions): CliSessionRow[]
   prune(now: number): void
 }

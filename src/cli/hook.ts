@@ -1,3 +1,6 @@
+import { execFile } from 'node:child_process'
+import { hookTerminalEnvironment, needsTerminalTty } from './hook-terminal-location'
+import { terminalLocation } from '../../packages/protocol/src/terminal-location'
 import { isPermissionCommandTool, permissionCwd, toolPermissionDisplay } from '@wechat-cc/protocol'
 /**
  * hook.ts — `wechat-cc hook …`:终端 claude / codex / cursor 会话的 hooks 出口
@@ -246,6 +249,46 @@ export function cursorEventOutput(raw: unknown): string {
   return event === 'beforeSubmitPrompt' ? JSON.stringify({ continue: true }) : '{}'
 }
 
+const TTY_PROBE_MS = 35
+type ProcessTtyProbe = (pid: number, timeout: number) => Promise<string>
+
+const probeProcessTty: ProcessTtyProbe = (pid, timeout) => new Promise(resolve => {
+  execFile('/bin/ps', ['-o', 'ppid=', '-o', 'tty=', '-p', String(pid)], { timeout, killSignal: 'SIGKILL' },
+    (error, stdout) => resolve(error ? '' : stdout))
+})
+
+export async function hookTerminalLocation(options: {
+  env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; ppid?: number; probe?: ProcessTtyProbe
+} = {}) {
+  const terminal = hookTerminalEnvironment(options.env, options.platform)
+  if (!terminal || !needsTerminalTty(terminal)) return terminal
+  const deadline = performance.now() + TTY_PROBE_MS
+  let pid = options.ppid ?? process.ppid
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const limit = new Promise<string>(resolve => { timer = setTimeout(() => resolve(''), TTY_PROBE_MS) })
+  try {
+    for (let depth = 0; depth < 6 && pid > 1; depth++) {
+      const remaining = Math.floor(deadline - performance.now())
+      if (remaining <= 0) break
+      const output = await Promise.race([(options.probe ?? probeProcessTty)(pid, remaining), limit])
+      const match = /^(\d+)\s+(\S+)$/.exec(output.trim())
+      if (!match) break
+      const [, parent, tty] = match
+      const name = /^(?:tty)?(s[0-9]{1,8})$/.exec(tty ?? '')?.[1]
+      if (name) return terminalLocation({ ...terminal, tty: `/dev/tty${name}` })
+      pid = Number(parent)
+    }
+  } catch { /* An unavailable tty must never block reporting the event. */ }
+  finally { if (timer !== undefined) clearTimeout(timer) }
+  return terminal
+}
+
+/** 记到了终端位置才带上它和主机名;记不到 ⇒ 原样(别的平台、没从终端起的会话照旧不多带字段)。 */
+export async function withTerminalLocation<T extends object>(payload: T): Promise<T & { machine?: string; terminal?: NonNullable<Awaited<ReturnType<typeof hookTerminalLocation>>> }> {
+  const terminal = await hookTerminalLocation()
+  return terminal ? { ...payload, machine: hostname(), terminal } : payload
+}
+
 /**
  * 给事件 / 权限请求补上「这台机是谁、有没有人在用」:主机名 + 本机空闲秒数。
  * 空闲探不到就不带(daemon 那头回落到别的信号)。
@@ -327,7 +370,8 @@ export async function relayPermission(stateDir: string, req: CliPermissionReques
   let hash: string
   try {
     const res = await f(`${api.baseUrl}/v1/cli/permission`, {
-      method: 'POST', headers, body: JSON.stringify(req), signal: AbortSignal.timeout(5000),
+      method: 'POST', headers, body: JSON.stringify({ ...req, deadline_at: deadline }),
+      signal: AbortSignal.timeout(Math.max(1, Math.min(totalMs, 5000))),
     })
     if (!res.ok) return { decision: null, status: `http_${res.status}` }
     const body = await res.json() as { status?: string; hash?: string }
@@ -336,22 +380,31 @@ export async function relayPermission(stateDir: string, req: CliPermissionReques
   } catch (err) {
     return { decision: null, status: err instanceof Error ? err.message : String(err) }
   }
+  const url = `${api.baseUrl}/v1/cli/permission?hash=${encodeURIComponent(hash)}`
+  const abandon = async (status: string): Promise<RelayPermissionResult> => {
+    try { await f(`${url}&abandon=1`, { method: 'GET', headers, signal: AbortSignal.timeout(1000) }) }
+    catch { /* The server also expires its own copy by the original deadline. */ }
+    return { decision: null, status }
+  }
   while (now() < deadline) {
-    const waitMs = Math.max(1, Math.min(pollMs, deadline - now()))
+    const budget = Math.max(1, deadline - now())
+    const waitMs = Math.min(pollMs, budget)
     let status: CliPermissionStatus
     try {
-      const res = await f(`${api.baseUrl}/v1/cli/permission?hash=${encodeURIComponent(hash)}&wait_ms=${waitMs}`, {
-        method: 'GET', headers, signal: AbortSignal.timeout(waitMs + 5000),
+      const res = await f(`${url}&wait_ms=${waitMs}`, {
+        method: 'GET', headers, signal: AbortSignal.timeout(Math.min(budget, waitMs + 5000)),
       })
-      if (!res.ok) return { decision: null, status: `http_${res.status}` }
+      if (!res.ok) return abandon(`http_${res.status}`)
       status = (await res.json() as { status?: CliPermissionStatus }).status ?? 'unknown'
     } catch (err) {
-      return { decision: null, status: err instanceof Error ? err.message : String(err) }
+      return abandon(now() >= deadline ? 'deadline' : err instanceof Error ? err.message : String(err))
     }
+    if (now() >= deadline) break
     if (status === 'allow' || status === 'deny') return { decision: status, status }
-    if (status !== 'pending') return { decision: null, status }
+    if (status === 'timeout' || status === 'undelivered') return { decision: null, status }
+    if (status !== 'pending') return abandon(status)
   }
-  return { decision: null, status: 'deadline' }
+  return abandon('deadline')
 }
 
 /**

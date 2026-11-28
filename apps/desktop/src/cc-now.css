@@ -106,3 +106,10 @@ button.now-row:focus-visible { outline: 2px solid var(--th-accent); outline-offs
 .cc-now-pane[data-conversation="single"] :is(.now-cc-col, .now-figure) { width: var(--th-identity-header-target); }
 .cc-now-pane[data-conversation="single"] .now-figure { height: var(--th-identity-header-target); }
 .cc-now-pane[data-conversation="single"] .now-figure img { width: var(--th-identity-header-image); height: var(--th-identity-header-image); }
+
+.now-connections .nc-row.nc-usage { display: flex; flex-direction: column; align-items: stretch; gap: var(--th-space-xs); }
+.now-connections .nc-usage-window { display: grid; gap: var(--th-space-xs); }
+.now-connections .nc-usage .nc-detail { text-align: left; }
+.now-connections .nc-usage-track { height: 3px; border-radius: var(--th-radius-control); background: var(--th-hair); overflow: hidden; }
+.now-connections .nc-usage-fill { display: block; height: 100%; border-radius: inherit; background: var(--th-ink-soft); }
+.now-connections .nc-usage-fill.warn { background: var(--th-accent); }

@@ -174,7 +174,9 @@ describe('自改走 CC 开口那道门(第三批 3a)', () => {
     expect(await h.glue.notice('第 3 步跑完了')).toEqual({ ok: false, error: 'send_failed' })
     const r = await h.glue.ask('要不要把这版合进 dev?', 600_000)
     expect(r).toMatchObject({ ok: true, delivered: true })
-    expect(h.sent.map(([, t]) => t.split('\n')[0])).toEqual(['要不要把这版合进 dev?'])
+    expect(h.sent.map(([, t]) => t.split('\n').slice(0, 2))).toEqual([
+      [expect.stringMatching(/^待批：权限请求 · 〔请求 [a-f0-9]{16}〕$/), '要不要把这版合进 dev?'],
+    ])
   })
   it('门还没接上 ⇒ 进展回 send_failed、卡片 delivered:false(条目照样在登记处)', async () => {
     const h = harness({ speech: () => null })

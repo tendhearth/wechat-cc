@@ -120,6 +120,7 @@ export interface InternalApiDeps {
   matters?: import('../../app/matters/service').MattersService
   /** 「CC 的连接」(spec 2026-10-01);main.ts 在 pipeline 接好后 setConnections。 */
   connections?: () => import('../connections').ConnectionsSnapshot
+  connectionUsage?: Pick<import('../../domain/subscription-usage').UsageMonitor, 'get' | 'peek'>
   // 桌面「连接手机」(phoneConnect)归手机功能(src/features/phone),`/v1/phone/*` 由 phone 模块自己挂。
   // 记忆(memory / memoryProjectsRoot / memoryLlm / memoryNightly)归记忆功能(src/features/memory),路由由 memory 模块自己挂。
   /**
@@ -239,7 +240,7 @@ export interface InternalApiDeps {
    */
   permissions?: {
     list(): import('../pending-permissions').PendingPermissionView[]
-    resolve(hash: string, decision: 'allow' | 'deny' | 'allow_task', reason?: string): boolean
+    resolve(hash: string, decision: import('../../ports/workbench').PermissionDecision, reason?: string): boolean | string
   }
   /**
    * 自改流水线跟主人打交道的三件事(spec 2026-09-18-self-change-pipeline)。
@@ -556,7 +557,7 @@ export interface InternalApiDeps {
 export const LATE_KEYS = [
   'delegate', 'conversation', 'a2a', 'socialView', 'knowledge', 'pairing', 'incidents',
   'cliSetup', 'llmRefreshProvider', 'llmHealth', 'llmRegistered', 'llmNames', 'llmEndpoints',
-  'workbenchSuspended', 'desktopSeen', 'matters', 'roster', 'places', 'companionConverse', 'petTurn', 'settingsLink', 'connections',
+  'workbenchSuspended', 'desktopSeen', 'matters', 'roster', 'places', 'companionConverse', 'petTurn', 'settingsLink', 'connections', 'connectionUsage',
   'cliUpgrade',
 ] as const satisfies readonly (keyof InternalApiDeps)[]
 export type LateKey = typeof LATE_KEYS[number]

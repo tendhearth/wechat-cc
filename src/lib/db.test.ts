@@ -1273,7 +1273,7 @@ describe('v96 — 一件事最后一次有动静的游标(P1a)', () => {
 })
 
 describe('v100 — cli_sessions 收成指针(M4d 第 2 步)', () => {
-  const COLS_AFTER = ['session_id', 'source', 'cwd', 'machine', 'transcript_path', 'origin_agent', 'last_event_at', 'last_prompt_at', 'created_at']
+  const COLS_AFTER = ['session_id', 'source', 'cwd', 'machine', 'transcript_path', 'origin_agent', 'last_event_at', 'last_prompt_at', 'created_at', 'terminal_json']
   it('删掉 status / last_summary / pending_*;别的列、行、索引原样;重放不抛', () => {
     const db = migratedTo(99)
     db.query(`INSERT INTO cli_sessions(session_id,source,cwd,machine,transcript_path,origin_agent,status,last_event_at,last_prompt_at,last_summary,pending_tool,pending_summary,pending_at,created_at)
@@ -1281,8 +1281,8 @@ describe('v100 — cli_sessions 收成指针(M4d 第 2 步)', () => {
     runMigrations(db, migrations)
     expect(db.query<{ name: string }, []>('PRAGMA table_info(cli_sessions)').all().map(c => c.name)).toEqual(COLS_AFTER)
     expect(db.query('SELECT * FROM cli_sessions ORDER BY session_id').all()).toEqual([
-      { session_id: 's1', source: 'claude', cwd: '/w', machine: 'mac', transcript_path: '/t.jsonl', origin_agent: 'hand-1', last_event_at: 5, last_prompt_at: 4, created_at: 1 },
-      { session_id: 's2', source: 'codex', cwd: '/v', machine: null, transcript_path: null, origin_agent: null, last_event_at: 9, last_prompt_at: null, created_at: 2 },
+      { session_id: 's1', source: 'claude', cwd: '/w', machine: 'mac', transcript_path: '/t.jsonl', origin_agent: 'hand-1', last_event_at: 5, last_prompt_at: 4, created_at: 1, terminal_json: null },
+      { session_id: 's2', source: 'codex', cwd: '/v', machine: null, transcript_path: null, origin_agent: null, last_event_at: 9, last_prompt_at: null, created_at: 2, terminal_json: null },
     ])
     expect(db.query<{ name: string }, []>("PRAGMA index_list('cli_sessions')").all().map(i => i.name)).toContain('idx_cli_sessions_last_event')
     const matters = db.query('SELECT COUNT(*) AS n FROM matters').get()
@@ -1702,5 +1702,19 @@ it('adds the strict recap table after v121 and removes its row when the session 
     expect(db.query('SELECT text,call_day,call_count FROM terminal_recaps').get()).toEqual({ text: null, call_day: '', call_count: 0 })
     db.query("DELETE FROM cli_sessions WHERE session_id='recap'").run()
     expect(db.query('SELECT 1 FROM terminal_recaps').get()).toBeNull()
+  } finally { db.close() }
+})
+
+it('v123 adds nullable terminal location to existing sessions and can be replayed', () => {
+  const db = migratedTo(122)
+  try {
+    db.exec("INSERT INTO cli_sessions(session_id,source,cwd,last_event_at,created_at) VALUES('old','claude','/work',42,1)")
+    runMigrations(db, migrations)
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: migrations.length })
+    expect(db.query("SELECT cwd,terminal_json FROM cli_sessions WHERE session_id='old'").get()).toEqual({ cwd: '/work', terminal_json: null })
+    migrations[122]!(db)
+    expect(db.query("SELECT COUNT(*) AS count FROM pragma_table_info('cli_sessions') WHERE name='terminal_json'").get()).toEqual({ count: 1 })
+    const empty = openSqlite(':memory:') as unknown as Db
+    try { expect(() => migrations[122]!(empty)).not.toThrow() } finally { empty.close() }
   } finally { db.close() }
 })

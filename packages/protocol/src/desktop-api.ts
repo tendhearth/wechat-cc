@@ -1,3 +1,4 @@
+import { TerminalLocationSchema, terminalLocationWire } from './terminal-location'
 import { permissionCwdWire, permissionDisplayWire } from './permission-display'
 import { NotebookChatReadRequest, NotebookChatReadResponse, NotebookJotRequest, NotebookJotResponse, NotebookPageResponse, NotebookUnseenResponse, NotebookSeenRequest, NotebookSeenResponse, NotebookPaperRequest, NotebookPaperResponse, NotebookStrikeRequest, NotebookStrikeResponse, NotebookWriteRequest, NotebookWriteResponse } from './notebook'
 import { RosterResponse } from './roster'
@@ -741,6 +742,7 @@ export const CliEventRequest = z.object({
   automated: z.boolean().optional(),
   transcript_path: z.string().max(1000).optional(),
   idle_s: z.number().min(0).optional(),
+  terminal: terminalLocationWire,
   machine: z.string().max(200).optional(),
 })
 export type CliEventRequestT = z.infer<typeof CliEventRequest>
@@ -758,16 +760,27 @@ export const CliPermissionRequest = z.object({
   command: z.string().max(2000).optional(),
   paths: z.array(z.string().min(1).max(1000)).max(50).optional(),
   idle_s: z.number().min(0).optional(),
+  terminal: terminalLocationWire,
   machine: z.string().max(200).optional(),
+  deadline_at: z.number().int().nonnegative().optional(),
 })
 export const CliPermissionQuery = z.object({
   hash: z.string().min(1).max(16),
+  abandon: z.literal('1').optional(),
   wait_ms: z.coerce.number().int().min(0).max(60_000).optional(),
 })
 // ── GET /v1/cli/sessions(终端会话登记处,v76)──────────────────────────────
 // ended=1 连已结束的也列;limit 默认 100,封顶 500(= 登记处的行数上限)。
+export const CliFocusRequest = z.object({ session_id: z.string().min(1).max(200) })
+export const CliFocusResponse = z.object({
+  ok: z.boolean(),
+  method: z.enum(['exact', 'app', 'none']),
+  reason: z.enum(['other_machine', 'not_found', 'automation_denied', 'app_unavailable', 'no_location']).optional(),
+})
+export type CliFocusResult = z.infer<typeof CliFocusResponse>
 export const CliSessionsQuery = z.object({
   owner:z.coerce.number().int().min(1).max(1).optional(),session_id:z.string().min(1).max(200).optional(),
+  unhooked: z.enum(['1']).optional(),
   ended: z.enum(['0', '1']).optional(),
   limit: z.coerce.number().int().min(1).max(500).optional(),
   // detail=1:每条补开没开着窗口 / 此刻在做哪一步(CC 的 terminal_sessions 用,2026-10-24)
@@ -1396,6 +1409,8 @@ const CliSessionsRowShape = z.object({
   stale: z.boolean(),
   project: z.string(),
   cwd: z.string(),
+  terminal: TerminalLocationSchema.optional(),
+  can_focus: z.literal(true).optional(),
   machine: z.string().nullable(),
   origin_agent: z.string().nullable(),
   last_summary: z.string().nullable(),
@@ -1403,6 +1418,7 @@ const CliSessionsRowShape = z.object({
   last_prompt_at: z.number().nullable(),
   created_at: z.number(),
   pending: CliPendingPermission.nullable(),
+  unhooked: z.literal(true).optional(),
   live_window: z.boolean().optional(),
   now_step: z.string().nullable().optional(),
 })
@@ -1410,7 +1426,7 @@ const CliSessionsRowShape = z.object({
 // 带拍板的码、此刻那一步、displayName)—— 处理器按 caller 选,一次回包里只会是其中一种。
 export const CliSessionsResponse = z.union([
   z.object({ ok: z.literal(true), sessions: z.array(CliSessionsRowShape) }),
-  z.object({ ok: z.literal(true), sessions: z.array(CliSessionRow) }),
+  z.object({ ok: z.literal(true), sessions: z.array(CliSessionRow.extend({ terminal: TerminalLocationSchema.optional(), can_focus: z.literal(true).optional() })) }),
 ])
 
 // ── POST /v1/cli/say ──
@@ -2179,7 +2195,7 @@ const PetPendingPermissionShape = z.object({
   prompt: z.string(),
   since: z.string(),
   expires_at: z.string(),
-  canAllowTask: z.boolean().optional(), canDenyWithReason: z.boolean().optional(), scripts: z.array(PermissionScript).optional(),
+  rememberRule: z.string().optional(), canAllowTask: z.boolean().optional(), canDenyWithReason: z.boolean().optional(), scripts: z.array(PermissionScript).optional(),
   taskId: z.string().optional(),
 })
 const PetTaskActivityShape = z.object({
@@ -2334,14 +2350,14 @@ const PermissionsPendingItemShape = z.object({
   since: z.string(),
   expires_at: z.string(),
   taskId: z.string().optional(),
-  canAllowTask: z.boolean().optional(), canDenyWithReason: z.boolean().optional(),
+  rememberRule: z.string().optional(), canAllowTask: z.boolean().optional(), canDenyWithReason: z.boolean().optional(),
   scripts: z.array(PermissionScript).optional(),
 })
 export const PermissionsPendingResponse = z.object({ items: z.array(PermissionsPendingItemShape) })
 export type PermissionsPendingResponseT = z.infer<typeof PermissionsPendingResponse>
 
 // ── POST /v1/permissions/resolve ── ok=false:hash 过期 / 已在微信拍过
-export const PermissionsResolveResponse = z.object({ ok: z.boolean() })
+export const PermissionsResolveResponse = z.object({ ok: z.boolean(), rule: z.string().optional() })
 
 // ── POST /v1/self-change/notice ── 失败走 409/502
 export const SelfChangeNoticeResponse = z.object({ ok: z.literal(true) })
@@ -2563,6 +2579,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/cli/permission': CliPermissionRequest,
   'GET /v1/cli/permission': CliPermissionQuery,
   'GET /v1/cli/sessions': CliSessionsQuery,
+  'POST /v1/cli/focus': CliFocusRequest,
   'POST /v1/cli/say': CliSayRequest,
   'GET /v1/cli/say': CliSayQuery,
   'GET /v1/subscribe/presence': PresenceTopicQuery,
@@ -2714,7 +2731,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'GET /v1/workbench/handoff': WorkbenchHandoffRecordResponse,
   // 一件事上的动作(P3e,/v1/matter/*):operator ⇒ 桌面那一份(同 /v1/workbench/* 双胞胎);手机令牌 ⇒ 手机那一份(带 ok: true)
   'POST /v1/matter/stop': z.union([WorkbenchTaskResponse, PhoneActionOk]),
-  'POST /v1/matter/permission': WorkbenchOkResponse,
+  'POST /v1/matter/permission': WorkbenchOkResponse.extend({ rule: z.string().optional() }),
   'POST /v1/matter/answer': WorkbenchOkResponse,
   'GET /v1/matter/artifact': z.union([WorkbenchArtifactResponse, PhoneActionOk.extend(MatterArtifactChunk.shape)]),
   'POST /v1/matter/handoff': z.union([WorkbenchQuotaHandoffResponse, PhoneActionOk.extend(MatterHandoffResult.shape)]),
@@ -2772,6 +2789,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/cli/permission': CliPermissionOpenResponse,
   'GET /v1/cli/permission': CliPermissionStatusResponse,
   'GET /v1/cli/sessions': CliSessionsResponse,
+  'POST /v1/cli/focus': CliFocusResponse,
   'POST /v1/cli/say': CliSayStartResponse,
   'GET /v1/cli/say': CliSayWaitResponse,
   'GET /v1/overseer/today': OverseerTodayResponse,

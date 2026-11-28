@@ -10,11 +10,11 @@ import { recapMemoHtml, sketchRecap } from './recap-memo.js'
 import { groupActivity, mergeActivity, terminalInputReason } from './thing-thread-model.js'
 import { permissionActionZh, permissionToolAction } from '../generated/permission-display.js'
 import { renderTerminalPermissionOperation } from './permission-operation.js'
-import { terminalPendingOperation, terminalTitle } from './terminal-waiting.js'
+import { canFocusTerminal, focusTerminalFromButton, terminalFocusHtml, terminalPendingOperation, terminalTitle } from './terminal-waiting.js'
 
 const { agentAvatarsHtml } = createAgentAvatars()
 /** @typedef {import('./thing-thread-model.js').Activity} Activity */
-/** @typedef {import('./thing-thread-model.js').Session} Session */
+/** @typedef {import('./thing-thread-model.js').Session & {terminal?:object,can_focus?:true}} Session */
 /** @typedef {import('./thing-thread-model.js').Place} Place */
 /** @typedef {Omit<import('./converse.js').ConverseMsg,'id'|'role'> & {id:string,role:string} & {steps?:Activity[],running?:boolean,recap?:import('@wechat-cc/protocol').SessionRecapT}} ThreadRow */
 /** @typedef {(method:any,path:string,body?:any)=>Promise<any>} Call */
@@ -69,17 +69,17 @@ function updateSteps(row, message) {
   return true
 }
 
-/** @param {{host:HTMLElement,call:Call,id:string,agent:string,place:()=>Place,ended:()=>boolean,onStatus:(name:string,status:string)=>void,onWaiting:(request:string|null)=>void}} options */
-export function mountTerminalThread({host, call, id, agent, place, ended, onStatus, onWaiting}) {
-  host.innerHTML = `<div class="converse-scroll thing-scroll"><button type="button" class="converse-earlier" data-converse-lead hidden>更早的</button></div>
+/** @param {{host:HTMLElement,call:Call,id:string,focusEnabled?:boolean,agent:string,place:()=>Place,ended:()=>boolean,onStatus:(name:string,status:string)=>void,onWaiting:(request:string|null)=>void}} options */
+export function mountTerminalThread({host, call, id, focusEnabled = false, agent, place, ended, onStatus, onWaiting}) {
+  host.innerHTML = `${focusEnabled ? `<header class="thing-terminal-header" hidden>${terminalFocusHtml(id)}</header>` : ''}<div class="converse-scroll thing-scroll"><button type="button" class="converse-earlier" data-converse-lead hidden>更早的</button></div>
     <button type="button" class="converse-latest" hidden>有新回复 · 回到最新</button>
     <div class="desk-waiting thing-waiting" hidden><div class="desk-waiting-row">${deskSpeakerHtml('cc')}<div class="desk-waiting-card">
       <div class="thing-waiting-body">
         <div class="desk-waiting-label">这件要你定</div><div class="desk-waiting-question"></div>
-        <div class="thing-waiting-operation"></div>
+        <div class="thing-waiting-operation"></div><p data-remember-rule hidden></p>
         <div class="desk-waiting-opinion" hidden></div><div class="desk-waiting-reason" hidden></div>
       </div>
-      <div class="place-ask"><button type="button" data-place-decision="deny">先不做</button><button type="button" class="place-allow" data-place-decision="allow">允许这一步</button><span class="thing-waiting-note" hidden>这里看不全，请到终端里看全再定。</span></div>
+      <div class="place-ask"><button type="button" data-place-decision="deny">先不做</button><button type="button" class="place-allow" data-place-decision="allow">允许这一步</button><button type="button" data-place-decision="remember" hidden>以后这类都不用问</button><span class="thing-waiting-note" hidden>这里看不全，请到终端里看全再定。</span></div>
       ${waitingOfflineNoteHtml}
     </div></div></div>
     <div class="thing-compose-status"><span role="status"></span><button class="desk-text-button" type="button" hidden>停止这一轮</button></div>
@@ -88,6 +88,9 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
       <textarea rows="1" maxlength="4000" data-terminal-input disabled></textarea><button type="submit" aria-label="发送" disabled>↑</button></form>`
   /** @template {Element} T @param {string} selector @returns {T} */
   const find = selector => /** @type {T} */ (host.querySelector(selector))
+  const focusHeader = host.querySelector('.thing-terminal-header')
+  const focusButton = focusHeader?.querySelector('button')
+  focusButton?.addEventListener('click', () => void focusTerminalFromButton(focusButton, call))
   const scroll = /** @type {HTMLElement} */ (find('.thing-scroll'))
   const earlier = /** @type {HTMLButtonElement} */ (find('[data-converse-lead]'))
   const latest = /** @type {HTMLButtonElement} */ (find('.converse-latest'))
@@ -95,6 +98,8 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
   const cardBody = /** @type {HTMLElement} */ (find('.thing-waiting-body'))
   const operationView = find('.thing-waiting-operation')
   const allow = /** @type {HTMLButtonElement} */ (find('[data-place-decision="allow"]'))
+  const remember = /** @type {HTMLButtonElement} */ (find('[data-place-decision="remember"]'))
+  const rulePreview = /** @type {HTMLElement} */ (find('[data-remember-rule]'))
   const deny = find('[data-place-decision="deny"]')
   const fullNote = /** @type {HTMLElement} */ (find('.thing-waiting-note'))
   const offlineNote = /** @type {HTMLElement} */ (find('[data-waiting-offline]'))
@@ -134,6 +139,7 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
     const who = name()
     const locked = readOnly()
     endedNote.hidden = !locked
+    focusHeader?.toggleAttribute('hidden', locked || !canFocusTerminal(session))
     if (locked) {
       form.remove()
       setText(note, '')
@@ -164,6 +170,14 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
     else if (!allow.parentElement) deny.after(allow)
     // 「允许」不在时,原因写在按钮旁边:卡片正文会滚,那里的说明不一定看得见。
     fullNote.hidden = !blind
+    const line = blind ? undefined : request?.rememberRule
+    rulePreview.hidden = !line
+    setText(rulePreview, line ?? '')
+    if (!line) remember.remove()
+    else {
+      remember.hidden = false
+      if (!remember.parentElement) allow.after(remember)
+    }
     const ccOpinion = matched ? waiting?.ccOpinion : ''
     const questionReason = matched ? waiting?.questionReason : ''
     opinion.toggleAttribute('hidden', !ccOpinion)
@@ -411,11 +425,12 @@ export function mountTerminalThread({host, call, id, agent, place, ended, onStat
     reflect()
     draw()
     try {
-      await v1(call,V1.cli.decide,{body:{session_id:id,hash,decision:button.dataset.placeDecision}})
+      const permanent = button.dataset.placeDecision === 'remember'
+      const receipt = await v1(call,V1.cli.decide,{body:{session_id:id,hash,decision:permanent ? 'allow' : button.dataset.placeDecision,...(permanent ? {remember:true} : {})}})
       if (!alive) return
       answered = hash
       dismissedAt = Date.now()
-      setText(note, '')
+      setText(note, receipt.rule ? `好，${receipt.rule}。` : '')
     } catch { if (alive && !readOnly()) setText(note, '尚未同步，请重试') }
     finally { deciding = false; if (alive) { reflect(); draw(); void refresh() } }
   }

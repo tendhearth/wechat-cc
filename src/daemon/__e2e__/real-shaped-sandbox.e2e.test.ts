@@ -118,9 +118,16 @@ const approvalFollowUps = new Map<string, string>([
   ['引用夹着其他请求号的卡，我想问一下。', ''],
   ['引用去掉标记的提醒，我想问一下。', ''],
 ])
+const privateCardFollowUps = new Map<string, string>([
+  ['引用终端命令审批，请解释一下。', ''],
+  ['引用终端改动审批，请解释一下。', ''],
+  ['引用自改审批，请解释一下。', ''],
+])
 function captureApprovalFollowUp(text: string): void {
-  for (const [question, prompt] of approvalFollowUps) {
-    if (!prompt && text.includes(question)) approvalFollowUps.set(question, text)
+  for (const followUps of [approvalFollowUps, privateCardFollowUps]) {
+    for (const [question, prompt] of followUps) {
+      if (!prompt && text.includes(question)) followUps.set(question, text)
+    }
   }
 }
 let codexDecision: unknown
@@ -138,7 +145,7 @@ const claudeScript: FakeSdkScript = { async onDispatch(text) {
       toolCalls: [], finalText: '沙盒审批已结束。',
       claudeApproval: { tool: 'Bash', input: {
         command: "rm -rf build\nprintf '%s' '" + 'fixture '.repeat(550) + "'",
-        run_in_background: true, timeout: 72543, description: claudeApprovalDescription,
+        run_in_background: true, timeout: 7254319, description: claudeApprovalDescription,
       } },
     }
   }
@@ -182,7 +189,7 @@ const codexScript: FakeSdkScript = {
     return { toolCalls: [], finalText: 'Codex 在。' }
   },
 }
-const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch' | 'speechFlushIntervalMs' | 'scheduledJobsIntervalMs' | 'reminderIntervalMs' | 'machineIdleS' | 'escalateAfterMs' | 'recordSessionAuth'> = {}) => startRealShapedDaemon({
+const boot = (more: Pick<RealShapedOpts, 'terminalTranscriptRoots' | 'stateDir' | 'agentConfigPatch' | 'speechFlushIntervalMs' | 'scheduledJobsIntervalMs' | 'reminderIntervalMs' | 'machineIdleS' | 'escalateAfterMs' | 'recordSessionAuth'> = {}) => startRealShapedDaemon({
   ...more,
   claudeScript, codexScript,
   // 只替身模型边界:让手动睡眠走正常成功路径,不发真实模型请求。
@@ -291,10 +298,36 @@ async function rebootForS2(o: { quiet: boolean; phone: boolean; keepPending?: bo
   return stateDir
 }
 // 冷启动要 import 整个 daemon,满载下可以超过 15s 的缺省 hook 上限
-beforeAll(async () => { d = await boot() }, 60_000)
-afterAll(async () => { try { await d?.stop() } finally { removeTempDir(project); removeTempDir(chatProject) } }, 30_000)
+const presessionFixture = mkdtempSync(join(tmpdir(), 'cc-sandbox-presession-'))
+const presessionID = 'sandbox-session-open-before-hook'
+beforeAll(async () => {
+  const claudeProjectsRoot = join(presessionFixture, '.claude', 'projects')
+  const codexRoot = join(presessionFixture, '.codex', 'sessions')
+  const fixtureProject = join(claudeProjectsRoot, 'project')
+  mkdirSync(fixtureProject, { recursive: true })
+  writeFileSync(join(fixtureProject, `${presessionID}.jsonl`), JSON.stringify({ type: 'user', sessionId: presessionID, cwd: project }) + '\n')
+  d = await boot({ terminalTranscriptRoots: { claudeProjectsRoot, codexRoot } })
+}, 60_000)
+afterAll(async () => { try { await d?.stop() } finally { removeTempDir(project); removeTempDir(chatProject); removeTempDir(presessionFixture) } }, 30_000)
 
 describe('real-shaped sandbox: the full daemon, configured like the owner\'s machine', { timeout: 60_000 }, () => {
+  it('开机只把先前开着的会话放进显式列表，SessionStart 接手后仍无 matter', async () => {
+    const rows = async (query: string) => (await desktop<{ sessions: CliSessionRowT[] }>('GET', `/v1/cli/sessions${query}`)).body.sessions
+    await expect.poll(async () => (await rows('?unhooked=1')).find(s => s.session_id === presessionID)).toMatchObject({ status: 'idle', unhooked: true, pending: null })
+    expect((await rows('')).some(s => s.session_id === presessionID)).toBe(false)
+    const say = await desktop('POST', '/v1/cli/session-say', { session_id: presessionID, text: '不能送进未接上的终端' })
+    expect(say.body).toMatchObject({ ok: false, error: 'not_found' })
+    expect((await desktop('POST', '/v1/cli/project-memory', { source: 'claude', session_id: presessionID, cwd: project }, 'trusted')).status).toBe(200)
+    const connected = (await rows('')).find(s => s.session_id === presessionID)
+    expect(connected).toMatchObject({ status: 'idle', pending: null })
+    expect(connected).not.toHaveProperty('unhooked')
+    const db = openSqlite(join(d.stateDir, 'wechat-cc.db'))
+    try {
+      expect(db.query("SELECT matter_id FROM matter_bindings WHERE surface='cli' AND surface_key=?").get(presessionID)).toBeNull()
+      db.query('DELETE FROM cli_sessions WHERE session_id=?').run(presessionID)
+    } finally { db.close() }
+  })
+
   it('boot: every module came up ok, health is green, nothing tried to reach the internet', async () => {
     expect(await d.moduleProblems()).toEqual([])
     const h = await d.health()
@@ -817,6 +850,75 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     }
   })
 
+  it('self-change without a delivered WeChat card requires one lookup before approval', async () => {
+    const prompt = 'Sandbox self-change approval'
+    d.ilink.failSendMessage({ errcode: -2 })
+    let opened: { code: string; hash: string }
+    try {
+      const result = await desktop<{ code: string; hash: string }>('POST', '/v1/self-change/ask', { prompt, timeoutMs: 60_000 })
+      expect(result.status).toBe(200)
+      opened = result.body
+    } finally { d.ilink.succeedSendMessage() }
+    const reply = `y ${opened.code}`
+    const pending = async () => (await desktop<{ items: { hash: string }[] }>('GET', '/v1/permissions/pending'))
+      .body.items.some(item => item.hash === opened.hash)
+    d.sendText(d.owner, reply)
+    await expect.poll(() => texts(d.ilink.outbox(), d.owner).some(text => text.includes(prompt) && text.includes(`看完回「y ${opened.code}」就批。`))).toBe(true)
+    expect(await pending()).toBe(true)
+    d.sendText(d.owner, reply)
+    await expect.poll(pending).toBe(false)
+    d.ilink.failSendMessage({ errcode: -2 })
+    try {
+      const result = await desktop<{ code: string; hash: string }>('POST', '/v1/self-change/ask', { prompt, timeoutMs: 60_000 })
+      expect(result.status).toBe(200)
+      opened = result.body
+    } finally { d.ilink.succeedSendMessage() }
+    d.sendText(d.owner, `n ${opened.code}`)
+    await expect.poll(async () => (await desktop<{ decision: string }>('GET', `/v1/self-change/decision?hash=${opened.hash}`)).body.decision).toBe('deny')
+  })
+
+  it('terminal hook: a missed WeChat card is shown on first allow, and the hook sees the second allow', async () => {
+    const session_id = 'sandbox-wechat-hook-approval'
+    const command = 'printf sandbox-hook-fixture'
+    const cwd = project
+    const open = () => desktop<{ status: string; hash: string }>('POST', '/v1/cli/permission', {
+      ...parsePermissionRequest('claude', { hook_event_name: 'PermissionRequest', session_id, cwd,
+        tool_name: 'Bash', tool_input: { command } }), idle_s: 3600, machine: hostname(),
+    }, 'trusted')
+    const codeOf = async (hash: string) => (await desktop<{ items: { hash: string; code: string }[] }>(
+      'GET', '/v1/permissions/pending')).body.items.find(item => item.hash === hash)?.code
+    const hookStatus = (hash: string) => desktop<{ status: string }>('GET', `/v1/cli/permission?hash=${hash}`, undefined, 'trusted')
+    const held = d.ilink.pauseNextSend(text => text.includes(command))
+    try {
+      const opened = await open()
+      expect(opened.body.status).toBe('pending')
+      await held.arrived
+      const hash = opened.body.hash, code = await codeOf(hash)
+      expect(code).toMatch(/^\d{2}$/)
+      const send = (text: string) => d.sendText(d.owner, text, { contextToken: 'hook-approval-context' })
+      send(`y ${code}`)
+      await expect.poll(() => texts(d.ilink.outbox(), d.owner).some(text =>
+        text.includes(command) && text.includes(`看完回「y ${code}」就批。`)), { timeout: 10_000 }).toBe(true)
+      expect((await hookStatus(hash)).body.status).toBe('pending')
+      held.release()
+      send(`y ${code}`)
+      await expect.poll(async () => (await hookStatus(hash)).body.status).toBe('allow')
+
+      const second = await open()
+      await expect.poll(() => codeOf(second.body.hash)).toMatch(/^\d{2}$/)
+      const seenCode = await codeOf(second.body.hash)
+      await expect.poll(() => texts(d.ilink.outbox(), d.owner).some(text => text.includes(command) && text.includes(`「y ${seenCode}」`))).toBe(true)
+      send(`y ${seenCode}`)
+      await expect.poll(async () => (await hookStatus(second.body.hash)).body.status).toBe('allow')
+
+      const third = await open()
+      await expect.poll(() => codeOf(third.body.hash)).toMatch(/^\d{2}$/)
+      const denyCode = await codeOf(third.body.hash)
+      send(`n ${denyCode}`)
+      await expect.poll(async () => (await hookStatus(third.body.hash)).body.status).toBe('deny')
+    } finally { held.release() }
+  })
+
   it('carries a structured terminal hook approval to desktop and a paired phone', async () => {
     const phone = makeProtocolClient({ open: d.phoneRelay.openPhone, token: NOTEBOOK_PHONE_TOKEN })
     const session_id = 'sandbox-structured-approval'
@@ -852,6 +954,47 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       await desktop('POST', '/v1/cli/decide', { session_id, decision: 'deny' })
       await desktop('POST', '/v1/cli/event', { source: 'claude', kind: 'session_end', session_id, cwd }, 'trusted')
       phone.close()
+    }
+  })
+
+  const askAboutPrivateCard = async (question: string, card: string, evidence: string[]) => {
+    d.sendText(d.owner, question, { quote: card })
+    await expect.poll(() => Boolean(privateCardFollowUps.get(question)), { timeout: 15_000 }).toBe(true)
+    const modelPrompt = privateCardFollowUps.get(question)!
+    for (const item of evidence) expect(modelPrompt.includes(item)).toBe(false)
+    expect(/<quote type="text">（引用了一张待批卡 · 〔请求 [a-f0-9]{16}〕）<\/quote>/.test(modelPrompt)).toBe(true)
+  }
+
+  it.each(['command', 'edit'])('ordinary chat summarizes a terminal %s approval quote', async kind => {
+    const [command, before, after] = ['printf offline-terminal-quote', 'offline-edit-before', 'offline-edit-after']
+    const question = kind === 'command' ? '引用终端命令审批，请解释一下。' : '引用终端改动审批，请解释一下。'
+    const req = kind === 'command'
+      ? { tool_name: 'Bash', tool_input: { command }, evidence: [command] }
+      : { tool_name: 'Edit', tool_input: { file_path: join(project, 'quote-fixture.txt'), old_string: before, new_string: after }, evidence: [before, after] }
+    const session_id = `offline-terminal-quote-${kind}`
+    const parsed = parsePermissionRequest('claude', { hook_event_name: 'PermissionRequest', session_id, cwd: project, tool_name: req.tool_name, tool_input: req.tool_input })
+    try {
+      expect((await desktop('POST', '/v1/cli/permission', { ...parsed, idle_s: 3600, machine: hostname() }, 'trusted')).status).toBe(200)
+      const isCard = (text: string) => req.evidence.every(item => text.includes(item))
+      const wire = await d.waitForOutbound(messages => texts(messages, d.owner).some(isCard), 10_000)
+      await askAboutPrivateCard(question, texts(wire, d.owner).find(isCard)!, req.evidence)
+    } finally {
+      await desktop('POST', '/v1/cli/decide', { session_id, decision: 'deny' })
+      await desktop('POST', '/v1/cli/event', { source: 'claude', kind: 'session_end', session_id, cwd: project }, 'trusted')
+    }
+  })
+
+  it('ordinary chat summarizes a self-change decision quote', async () => {
+    const change = 'offline-self-change-details'
+    const opened = await desktop<{ code: string; delivered: boolean }>('POST', '/v1/self-change/ask', {
+      prompt: `离线自改决策\n${change}`, timeoutMs: 60_000,
+    })
+    expect(opened.body.delivered).toBe(true)
+    try {
+      const card = texts(d.ilink.outbox(), d.owner).find(text => text.includes(change))!
+      await askAboutPrivateCard('引用自改审批，请解释一下。', card, [change])
+    } finally {
+      d.sendText(d.owner, `n ${opened.body.code}`)
     }
   })
 
@@ -1398,7 +1541,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(complete.hash).toBe(detail.body.permissions[0]!.id)
     const completeText = await lookup(asking, complete.hash)
     expect(completeText.includes(`Codex 想运行一条命令：\n〔命令开始〕\n│ ${scopedApprovalCommand}\n〔命令结束〕`)).toBe(true)
-    const instruction = (code: string) => `回「y ${code}」允许这一步、「n ${code}」拒绝。拒绝理由选填：「n ${code} 理由」。`
+    const instruction = (code: string) => `看完回「y ${code}」就批准这一步，回「n ${code}」拒绝。拒绝理由选填：「n ${code} 理由」。`
     const rejectOnlyInstruction = (code: string) => `这条在微信里看不全，到电脑或手机上看全再定；回「n ${code}」拒绝。`
     expect(completeText.endsWith(instruction(complete.code))).toBe(true)
     const markerLine = completeText.split('\n')[1]!
@@ -1406,7 +1549,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const noticeHeader = completeNotice.split('\n')[0]!
     expect(noticeHeader).toBe(`待批 / Approval · ${detail.body.task.title} · ${asking}`)
     expect(completeNotice.split('\n')[1]).toBe(markerLine)
-    expect(completeNotice.includes(instruction(complete.code))).toBe(true)
+    expect(completeNotice).toContain(`回「y ${complete.code}」先看完整请求，再回一次就批；回「n ${complete.code}」拒绝。拒绝理由选填：「n ${complete.code} 理由」。`)
     const alteredText = completeText.replace('〔命令结束〕', '〔命令结束〕（已编辑）')
     const injectedCommand = 'rm -rf sandbox-quoted-command'
     const questions = [...approvalFollowUps.keys()]
@@ -1607,11 +1750,11 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(d.log().some(line => line.includes(privateApprovalEvidence) || /SANDBOX_INLINE_APPROVAL|SANDBOX_PRIVATE_DIFF|SANDBOX_APPROVAL_FILE/.test(line))).toBe(false)
     // The same owner routes must carry Claude's command options through a long, reject-only card.
     const claude = await next(claudeApprovalTitle, 'claude')
-    expect(claude.notice).not.toMatch(/run_in_background|timeout|description|72543|sandboxapprovaldescriptionfixture/)
+    expect(claude.notice).not.toMatch(/run_in_background|timeout|description|7254319|sandboxapprovaldescriptionfixture/)
 
     const at = d.ilink.outbox().length
     d.sendText(d.owner, `y ${claude.card.code}`, { contextToken: 'approval-fresh-context' })
-    const feedback = () => d.ilink.outbox().slice(at).find(m => m.text === WECHAT_PERMISSION_INCOMPLETE)
+    const feedback = () => d.ilink.outbox().slice(at).find(m => m.text?.startsWith('待批 / Approval') && m.text.includes(WECHAT_PERMISSION_INCOMPLETE))
     await expect.poll(() => Boolean(feedback())).toBe(true)
     expect(feedback()?.raw).toMatchObject({ msg: { context_token: 'approval-fresh-context' } })
 
@@ -1625,7 +1768,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
         const [permission] = MatterDetail.parse(body).permissions
         expect(permission?.display?.body.kind).toBe('command')
         expect(permission?.display?.extra).toEqual([
-          { name: 'run_in_background', value: 'true' }, { name: 'timeout', value: '72543' },
+          { name: 'run_in_background', value: 'true' }, { name: 'timeout', value: '7254319' },
           { name: 'description', value: claudeApprovalDescription },
         ])
       }
@@ -1633,9 +1776,9 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       await expect.poll(async () => MatterDetail.parse((await desktop('GET', claudeDetailPath)).body).permissions).toHaveLength(0)
       const history = await desktop('GET', '/v1/matter/owner-chat')
       expect(history.status).toBe(200)
-      expect(JSON.stringify(history.body)).not.toMatch(/run_in_background|72543|sandboxapprovaldescriptionfixture/)
+      expect(JSON.stringify(history.body)).not.toMatch(/run_in_background|7254319|sandboxapprovaldescriptionfixture/)
       expect(d.query('SELECT id FROM messages WHERE instr(text,?) > 0 OR instr(text,?) > 0 OR instr(text,?) > 0',
-        'run_in_background', '72543', claudeApprovalDescription)).toEqual([])
+        'run_in_background', '7254319', claudeApprovalDescription)).toEqual([])
     } finally { claudePhone.close() }
   })
 

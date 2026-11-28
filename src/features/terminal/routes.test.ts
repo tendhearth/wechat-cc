@@ -6,7 +6,7 @@ import { hostname } from 'node:os'
 
 const qs = () => new URLSearchParams()
 // 只给用到的那一项:没接线的分支已经没有了(模块门在 internal-api 那一层回 module_starting,见 say-route.test.ts)
-const deps = (cliEvents?: Partial<TerminalRoutesDeps['cliEvents']>, cliPermissions?: TerminalRoutesDeps['cliPermissions']): TerminalRoutesDeps => ({ cliEvents, cliPermissions } as unknown as TerminalRoutesDeps)
+const deps = (cliEvents?: Partial<TerminalRoutesDeps['cliEvents']>, cliPermissions?: Partial<TerminalRoutesDeps['cliPermissions']>): TerminalRoutesDeps => ({ cliEvents, cliPermissions } as unknown as TerminalRoutesDeps)
 const body = { source: 'claude', kind: 'stop', session_id: 'abc123', cwd: '/w/p', text: 'done' }
 
 describe('SessionStart project memory route', () => {
@@ -123,4 +123,56 @@ describe('GET /v1/overseer/today(「今天」一眼看完,2026-10-14)', () => {
     expect(await broken(qs(), undefined)).toEqual({ status: 503, body: { error: 'unavailable' } })
     expect(minTierFor('GET /v1/overseer/today')).toBe('admin')
   })
+})
+
+it('成功接上 hook 后扫一次，安装失败和卸载时不扫', async () => {
+  const ok = { ok: true, results: [], status: [] }
+  const bad = { ...ok, ok: false }
+  const scanPresessions = vi.fn(async () => {})
+  const install = vi.fn().mockReturnValueOnce(bad).mockReturnValueOnce(ok)
+  const routes = terminalRoutes({ ...deps(), cliHooks: { install, uninstall: () => ok }, scanPresessions })
+  const post = routes['POST /v1/cli/hooks/install']!
+  expect((await post(qs(), { sources: ['claude'] })).body).toEqual(bad)
+  await routes['POST /v1/cli/hooks/uninstall']!(qs(), { sources: ['claude'] })
+  expect(scanPresessions).not.toHaveBeenCalled()
+  expect((await post(qs(), { sources: ['claude'] })).body).toEqual(ok)
+  expect(scanPresessions).toHaveBeenCalledTimes(1)
+})
+
+it('只有显式请求的桌面和设备列表包含没接上的会话', async () => {
+  const list = vi.fn(() => [])
+  const phoneSessions = vi.fn(() => [])
+  const get = terminalRoutes({ ...deps({ list }), phoneSessions })['GET /v1/cli/sessions']!
+  const query = new URLSearchParams({ unhooked: '1' })
+  await get(query, undefined, { origin: 'operator', tier: 'admin' })
+  expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ includeUnhooked: true }))
+  await get(query, undefined, { origin: 'device', tier: 'admin' })
+  expect(phoneSessions).toHaveBeenLastCalledWith(undefined, undefined, true)
+  await get(qs(), undefined, { origin: 'device', tier: 'admin' })
+  expect(phoneSessions).toHaveBeenLastCalledWith(undefined, undefined, false)
+  await get(query, undefined, { origin: 'link', tier: 'admin' })
+  expect(phoneSessions).toHaveBeenLastCalledWith(undefined, undefined, false)
+})
+
+it('a dropped poll does not withdraw the card (the hook may be retrying); only explicit abandonment from the file token does', async () => {
+  const expire = vi.fn()
+  const status = vi.fn(() => 'timeout' as const)
+  const open = vi.fn(async () => ({ status: 'pending' as const, hash: 'abc12' }))
+  const wait = vi.fn(async () => 'pending' as const)
+  const routes = terminalRoutes(deps(undefined, { expire, open, status, wait } as never))
+  const file = { origin: 'file', tier: 'trusted' } as never
+  const controller = new AbortController()
+  const ctx = { signal: controller.signal, onSent: vi.fn() }
+  await routes['GET /v1/cli/permission']!(new URLSearchParams({ hash: 'abc12', wait_ms: '20000' }), undefined, file, ctx)
+  controller.abort()
+  const lost = new AbortController()
+  lost.abort()
+  await routes['POST /v1/cli/permission']!(qs(), {}, file, { signal: lost.signal, onSent: vi.fn() })
+  expect(expire).not.toHaveBeenCalled()
+
+  const query = new URLSearchParams({ hash: 'abc12', abandon: '1' })
+  expect((await routes['GET /v1/cli/permission']!(query, undefined, { origin: 'operator', tier: 'admin' } as never)).status).toBe(403)
+  expect(expire).not.toHaveBeenCalled()
+  expect(await routes['GET /v1/cli/permission']!(query, undefined, file)).toEqual({ status: 200, body: { hash: 'abc12', status: 'timeout' } })
+  expect(expire).toHaveBeenCalledExactlyOnceWith('abc12')
 })

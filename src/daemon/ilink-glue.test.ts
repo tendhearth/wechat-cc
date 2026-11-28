@@ -1,6 +1,9 @@
+import { makeCodexChatGate } from '../adapters/executors/codex/codex-chat-gate'
+import { TIER_PROFILES } from '../domain/user-tier'
+import type { SpawnContext } from '../ports/agent-provider'
 import { renderChatApprovalPrompt } from '../adapters/executors/chat-approval'
 import { makeProjects } from './projects'
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { makeIlinkAdapter, loadAllAccounts, type Account } from './ilink-glue'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -17,6 +20,18 @@ function newAdapterDeps(): { db: Db; conversationStore: ConversationStore } {
   const db = openTestDb()
   const conversationStore = makeConversationStore(db)
   return { db, conversationStore }
+}
+
+afterEach(() => vi.restoreAllMocks())
+
+function fakeApprovalWire(adapter: ReturnType<typeof makeIlinkAdapter>, chatId: string, sent: string[] = []) {
+  adapter.captureContextToken(chatId, 'fixture-context')
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+    const text = JSON.parse(String(init?.body)).msg.item_list[0].text_item.text
+    sent.push(text)
+    return Response.json({ errcode: 0 })
+  })
+  return vi.spyOn(adapter, 'sendMessage')
 }
 
 describe('loadAllAccounts', () => {
@@ -172,12 +187,9 @@ describe('makeIlinkAdapter (composed)', () => {
 
   it('handlePermissionReply consumes a registered permission entry', async () => {
     const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
-    // Register a pending hash without the askUser network call
-    // We test the internal wiring: askUser registers + handlePermissionReply consumes.
-    // Use askUser with very long timeout — manually consume via handlePermissionReply.
+    const wire = fakeApprovalWire(a, 'chat-1')
     const p = a.askUser('chat-1', 'test prompt', 'ab123', 60_000)
-    // Immediately consume it — from the approver's OWN chat (see the
-    // cross-chat test below for why the second arg is now load-bearing).
+    await wire.mock.results[0]!.value
     const consumed = a.handlePermissionReply('y ab123', 'chat-1')
     expect(consumed).toBe(true)
     const decision = await p
@@ -188,13 +200,17 @@ describe('makeIlinkAdapter (composed)', () => {
   it('权限卡经 CC 开口那道门记一行账(permission_ask,只记账不拦);门没接上 / 记账抛错 ⇒ 卡照样登记、照样能批', async () => {
     const asks: Array<[string, string]> = []
     const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps(), speech: () => ({ ask: (req: { kind: string; chatId: string }) => { asks.push([req.kind, req.chatId]); return { allow: true as const, channel: 'wechat' as const } } }) })
+    const wire = fakeApprovalWire(a, 'chat-1')
     const p = a.askUser('chat-1', 'test prompt', 'ab124', 60_000)
+    await wire.mock.results[0]!.value
     expect(asks).toEqual([['permission_ask', 'chat-1']])
     expect(a.handlePermissionReply('y ab124', 'chat-1')).toBe(true)
     expect(await p).toBe('allow')
     for (const speech of [() => null, () => ({ ask: () => { throw new Error('ledger down') } })]) {
       const b = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps(), speech })
+      const wire = fakeApprovalWire(b, 'chat-1')
       const q = b.askUser('chat-1', 'test prompt', 'ab125', 60_000)
+      await wire.mock.results[0]!.value
       expect(b.handlePermissionReply('y ab125', 'chat-1')).toBe(true)
       expect(await q).toBe('allow')
       await b.flush()
@@ -245,6 +261,74 @@ describe('makeIlinkAdapter (composed)', () => {
       await expect(p).resolves.toBe('undelivered')
     } finally {
       vi.useRealTimers()
+    }
+  })
+
+  it.each([true, false])('waits for an in-flight resend after initial failure (resend succeeds: %s)', async succeeds => {
+    vi.useFakeTimers()
+    try {
+      const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+      a.captureContextToken('chat-1', 'fixture-context')
+      const first = Promise.withResolvers<Response>()
+      const resend = Promise.withResolvers<Response>()
+      const wire = vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(first.promise).mockReturnValueOnce(resend.promise)
+      const decision = a.askUser('chat-1', 'offline approval fixture', 'race1', 60_000)
+      const approve = a.handlePermissionReply('y 01', 'chat-1', undefined, undefined, 'first-reply')
+      expect(wire).toHaveBeenCalledTimes(2)
+      first.resolve(Response.json({ errcode: -2 }))
+      await vi.advanceTimersByTimeAsync(0)
+      const stillPending = a.listPendingPermissions().some(item => item.hash === 'race1')
+      resend.resolve(Response.json({ errcode: succeeds ? 0 : -2 }))
+      expect(await approve).toBe(succeeds)
+      expect(stillPending).toBe(true)
+      if (succeeds) expect(a.handlePermissionReply('y 01', 'chat-1', undefined, undefined, 'next-reply')).toBe(true)
+      await expect(decision).resolves.toBe(succeeds ? 'allow' : 'undelivered')
+      expect(a.listPendingPermissions()).toHaveLength(0)
+      await a.flush()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['complete', 'clipped', 'spaces', 'indentation'] as const)('checks the rendered Codex plan on WeChat (%s)', async variant => {
+    const clipped = variant === 'clipped'
+    const whitespace = variant === 'spaces' ? '核对 notes  draft.txt。' : variant === 'indentation' ? '核对片段：\n  nested: value' : ''
+    const incomplete = clipped || Boolean(whitespace)
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+    const sent: string[] = []
+    a.captureContextToken('chat-1', 'fixture-context')
+    const first = Promise.withResolvers<Response>()
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => {
+      sent.push(JSON.parse(String(init?.body)).msg.item_list[0].text_item.text)
+      return sent.length === 1 ? first.promise : Promise.resolve(Response.json({ errcode: 0 }))
+    })
+    const approve = makeCodexChatGate({
+      askUser: a.askUser, adminFor: () => 'chat-1', log: () => {},
+      resolveMatterPlan: () => ({ target: { kind: 'managed' }, projectName: 'Plan fixture', projectPath: '/tmp/plan-fixture' }),
+    })({ chatId: 'chat-1', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' } as SpawnContext)
+    const legs = Array.from({ length: 4 }, (_, i) => ({ executor: 'codex', brief: '资料'.repeat(clipped && i === 0 ? 200 : 110) + (i === 0 ? whitespace : '') + `第 ${i + 1} 棒末尾` }))
+    const input = { title: '离线计划', legs }
+    const description = JSON.stringify(input)
+    expect(description.length).toBeGreaterThan(800)
+    const result = approve({ tool: 'mcp__wechat__matter_plan', input, description }, new AbortController().signal)
+    try {
+      await expect.poll(() => sent.length > 0).toBe(true)
+      expect(await a.handlePermissionReply('y 01', 'chat-1', undefined, undefined, 'show-plan')).toBe(true)
+      expect(a.listPendingPermissions()).toHaveLength(1)
+      const shown = sent[1] ?? ''
+      for (const [i, leg] of legs.entries()) expect(shown.includes(leg.brief)).toBe(!incomplete || i !== 0)
+      expect(shown.includes('看完回「y 01」就批。')).toBe(!incomplete)
+      expect(shown.includes('内容在微信里看不全')).toBe(incomplete)
+      expect(await a.handlePermissionReply('y 01', 'chat-1', undefined, undefined, 'decide-plan')).toBe(true)
+      if (incomplete) {
+        expect(a.listPendingPermissions()).toHaveLength(1)
+        expect(a.handlePermissionReply('n 01', 'chat-1')).toBe(true)
+      }
+      await expect(result).resolves.toBe(!incomplete)
+    } finally {
+      first.resolve(Response.json({ errcode: 0 }))
+      a.handlePermissionReply('n 01', 'chat-1')
+      await a.flush()
     }
   })
 
@@ -474,8 +558,9 @@ describe('微信拍板的省事路径(2026-09-10:手机上「y og0ez」太难打
   })
   it('只有一条待批:回「y」不带码就放行;别的 chat 回「y」不算', async () => {
     const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
-    vi.spyOn(a, 'sendMessage').mockResolvedValue({ msgId: 'm' })
+    const wire = fakeApprovalWire(a, 'chat-1')
     const p = a.askUser('chat-1', 'p', 'aaaaa', 60_000)
+    await wire.mock.results[0]!.value
     expect(a.handlePermissionReply('y', 'chat-2')).toBe(false)   // chat-2 名下没有待批 → 当普通消息
     expect(a.handlePermissionReply('同意', 'chat-1')).toBe(true)
     expect(await p).toBe('allow')
@@ -488,9 +573,10 @@ describe('微信拍板的省事路径(2026-09-10:手机上「y og0ez」太难打
   it('多条待批:不带码 → 回一条清单让主人带码,两条都还挂着;「n 02」按码拒绝第二条', async () => {
     const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
     const sent: string[] = []
-    vi.spyOn(a, 'sendMessage').mockImplementation(async (_c, text) => { sent.push(text); return { msgId: 'm' } })
+    const wire = fakeApprovalWire(a, 'chat-1', sent)
     const p1 = a.askUser('chat-1', 'Bash: rm -rf ./tmp', 'h0001', 60_000)
     const p2 = a.askUser('chat-1', 'Write: notes.md', 'h0002', 60_000)
+    await Promise.all(wire.mock.results.map(result => result.value))
     expect(await a.handlePermissionReply('y', 'chat-1')).toBe(true)      // 吃掉了,但没批
     expect(sent[sent.length - 1]).toContain('有 2 条在等你')
     expect(sent[sent.length - 1]).toContain('01:Bash: rm -rf ./tmp')
@@ -514,9 +600,10 @@ describe('引用卡片回「y」', () => {
   it('多条待批时引用其中一张回「y」,批的就是那张;引用的不是卡片则退回按条数处理', async () => {
     const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
     const sent: string[] = []
-    vi.spyOn(a, 'sendMessage').mockImplementation(async (_c, text) => { sent.push(text); return { msgId: 'm' } })
+    const wire = fakeApprovalWire(a, 'chat-1', sent)
     const p1 = a.askUser('chat-1', 'Bash: rm -rf ./tmp', 'h0001', 60_000)
     const p2 = a.askUser('chat-1', 'Write: notes.md', 'h0002', 60_000)
+    await Promise.all(wire.mock.results.map(result => result.value))
     const card2 = sent[1]!
     expect(a.handlePermissionReply('y', 'chat-1', card2)).toBe(true)
     expect(await p2).toBe('allow')
@@ -543,11 +630,13 @@ describe('引用卡片回「y」', () => {
   it('a truncated shared card header binds only its own request, including after stop and a new turn', async () => {
     const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
     const sent: string[] = []
-    vi.spyOn(a, 'sendMessage').mockImplementation(async (_c, text) => { sent.push(text); return { msgId: 'm' } })
-    const old = a.askUser('chat-1', renderChatApprovalPrompt('Claude', 'Bash', { command: 'old offline action' }, 'old02'), 'old02', 60000)
+    const wire = fakeApprovalWire(a, 'chat-1', sent)
+    const old = a.askUser('chat-1', renderChatApprovalPrompt('Claude', 'Bash', { command: 'old offline action' }, 'old02').prompt, 'old02', 60000)
+    await wire.mock.results[0]!.value
     const oldHeader = sent[0]!.split('\n')[0]!
     a.resolvePermission('old02', 'deny'); await old
-    const next = a.askUser('chat-1', renderChatApprovalPrompt('Claude', 'Bash', { command: 'new offline action' }, 'new02'), 'new02', 60000)
+    const next = a.askUser('chat-1', renderChatApprovalPrompt('Claude', 'Bash', { command: 'new offline action' }, 'new02').prompt, 'new02', 60000)
+    await wire.mock.results[1]!.value
     expect(a.probePermissionReply('y', 'chat-1', oldHeader)).toBe(false)
     expect(a.handlePermissionReply('y', 'chat-1', oldHeader)).toBe(false)
     expect(a.listPendingPermissions().map(p => p.hash)).toEqual(['new02'])

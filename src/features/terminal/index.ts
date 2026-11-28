@@ -43,6 +43,7 @@ export function terminalFeature(o: { needs: readonly string[]; lazy?: readonly s
     init(ctx) {
       const terminal = wireTerminal(o.deps(ctx))
       ctx.get<InternalApiLifecycle>('internal-api').mount('terminal', terminalRoutes({...terminal.routes,participation:terminal.participation(ctx.get<InternalApiLifecycle>('internal-api'))}))
+      ctx.onStart('presession-scan', () => { void terminal.scanPresessions() })
       return terminal
     },
   }

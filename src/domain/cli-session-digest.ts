@@ -113,7 +113,7 @@ export function formatCliSessionDigest(views: readonly CliDigestView[], opts: Cl
       const what = [tool, v.pending.summary ?? ''].filter(Boolean).join(': ')
       if (what) lines.push(`   ${oneLine(what)}`)
       const ref = replyRefOf(v)
-      lines.push(ref ? `   —— 回「y ${ref}」放行、「n ${ref}」拒绝` : '   —— 终端那边在问,回终端处理')
+      lines.push(ref ? `   —— 回「y ${ref}」查看请求（看过卡就批准），回「n ${ref}」拒绝` : '   —— 终端那边在问,回终端处理')
     } else if (v.last_summary) {
       lines.push(`   ${oneLine(v.last_summary)}`)
     }

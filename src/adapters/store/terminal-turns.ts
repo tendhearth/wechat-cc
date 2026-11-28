@@ -77,12 +77,14 @@ export function makeTerminalTurnLog(deps: { db: Db; log: MatterLog; matters: Pic
     permissionAsked(req, at) {
       ask(matterOf(req), req, at)
     },
-    permissionSettled(sessionId, status) {
+    permissionSettled(sessionId, status, ownerPermission) {
       const m = matters.findBySurface('cli', sessionId)
-      if (!m) return
+      if (!m) return false
       const key = openCard(m.id)
-      if (!key) return
-      log.writeItem({ matterId: m.id, kind: 'permission', status: status === 'allow' ? 'completed' : 'failed', key, payload: { ...(log.item(m.id, key)?.payload ?? {}), outcome: status } })
+      if (!key && !ownerPermission) return false
+      log.writeItem({ matterId: m.id, kind: 'permission', status: status === 'allow' ? 'completed' : 'failed',
+        ...(key ? { key } : {}), payload: { ...(key ? log.item(m.id, key)?.payload : {}), outcome: status, ...(ownerPermission ? { ownerPermission } : {}) } })
+      return true
     },
     interruptAll(at = Date.now()) {
       // 终端会话在 daemon 外面跑,daemon 重启它照样在做 ⇒ 最近还有动静的轮不收,等它自己的 stop(M4d:和登记处一致)。

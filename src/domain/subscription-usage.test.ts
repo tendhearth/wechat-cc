@@ -69,3 +69,24 @@ describe('makeUsageMonitor',()=>{
     await expect(m.get('unknown' as never)).resolves.toBeNull()
   })
 })
+
+it('peeks without I/O and keeps the last snapshot during a failed refresh and its cooldown', async () => {
+  let now = NOW
+  const source = vi.fn()
+    .mockImplementationOnce(async () => parseCodexRateLimits(CODEX, now))
+    .mockImplementationOnce(() => { throw new Error('offline') })
+    .mockImplementationOnce(async () => parseCodexRateLimits(CODEX, now))
+  const monitor = makeUsageMonitor({ sources: { codex: source }, ttlMs: 1_000, now: () => now })
+  expect(monitor.peek('codex')).toBeNull()
+  expect(source).not.toHaveBeenCalled()
+  const first = await monitor.get('codex')
+  now += 1_000
+  expect(monitor.peek('codex')).toBe(first)
+  expect(source).toHaveBeenCalledTimes(1)
+  expect(await Promise.all([monitor.get('codex'), monitor.get('codex')])).toEqual([first, first])
+  expect(await monitor.get('codex')).toBe(first)
+  expect(source).toHaveBeenCalledTimes(2)
+  now += 1_000
+  expect(await monitor.get('codex')).toMatchObject({ fetchedAt: now })
+  expect(source).toHaveBeenCalledTimes(3)
+})

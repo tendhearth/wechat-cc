@@ -1,11 +1,15 @@
 import { supportsBrowserSnapshot } from './macmini-browser-snapshot.mjs'
 import { supportsAppSnapshot } from './macmini-app-snapshot.mjs'
 import { test, expect } from 'vitest'
+import { browserHarness, sshInvocation } from './macmini-ui-protocol.mjs'
 import { main } from './macmini-ui.mjs'
 import { readFileSync } from 'node:fs'
 
+const jsonBody = input => JSON.parse(input.subarray(4 + input.readUInt32BE(0)))
+
 test('fake SSH carries gate limits to both remote lanes and propagates failure', () => {
-  for (const lane of ['browser', 'unit', 'app-build', 'app-maestro']) {
+  for (const lane of ['status', 'doctor', 'native-smoke', 'capture', 'browser', 'unit', 'embedded',
+    'embedded-build', 'production-build', 'app-status', 'app-prepare', 'app-build', 'app-maestro']) {
     const calls = []
     const fakeSSH = (...args) => { calls.push(args); return { status: 124 } }
     expect(main(['node', 'entry', lane], { PATH: '/fake-ssh', CC_UI_LOCK_WAIT_MS: '20', CC_UI_LOAD_WAIT_MS: '30', CC_UI_JOB_TIMEOUT_MS: '40' }, fakeSSH)).toBe(124)
@@ -13,8 +17,8 @@ test('fake SSH carries gate limits to both remote lanes and propagates failure',
     const [file, args, options] = calls[0]
     expect(file).toBe('ssh')
     expect(args.at(-1)).toContain('CC_UI_LOCK_WAIT_MS=20 CC_UI_LOAD_WAIT_MS=30 CC_UI_JOB_TIMEOUT_MS=40')
-    expect(args.at(-1)).toContain(lane.startsWith('app-') ? 'app-run.mjs' : 'run.mjs')
-    expect(JSON.parse(options.input).command).toBe(lane)
+    expect(args.at(-1)).toContain('/macmini-lab-bootstrap.mjs')
+    expect(jsonBody(options.input).command).toBe(lane)
     expect(options.env.PATH).toBe('/fake-ssh')
   }
 })
@@ -55,9 +59,13 @@ test('legacy verify lanes fail locally before reaching even an old remote', () =
 test('browser transport is isolated from the App and native desktop wrappers', () => {
   const calls=[]
   main(['node','entry','browser'],{},(...args)=>{calls.push(args);return {status:0}})
-  expect(calls[0][1].at(-1)).toContain('/browser-run.mjs')
+  expect(calls[0][1].at(-1)).toContain('/macmini-lab-bootstrap.mjs')
+  expect(sshInvocation('browser').args.at(-1)).toContain('/browser-run.mjs')
+  expect(sshInvocation('unit').args.at(-1)).toContain('/run.mjs')
   const receiver=readFileSync(new URL('./macmini-browser-snapshot.mjs',import.meta.url),'utf8')
-  expect(receiver.indexOf('await acquireMachineLock')).toBeLessThan(receiver.indexOf("await mkdir(join(root,'project')"))
+  const lock = receiver.indexOf('await acquire(')
+  expect(lock).toBeGreaterThanOrEqual(0)
+  expect(lock).toBeLessThan(receiver.indexOf('await (fs.mkdir??nativeFs.mkdir)(snapshotRoot'))
   expect(receiver).toContain('archiveSha256')
   expect(receiver).toContain('Workspace dependency leaves snapshot')
   expect(receiver).toContain("{...config,browserRoot:root}")
@@ -115,8 +123,9 @@ test('reply speaker accepts only its assigned App snapshot and transports the re
   const calls = []
   expect(main(['node', 'entry', 'app-maestro', 'reply-speaker'], {}, (...args) => { calls.push(args); return { status: 0 } })).toBe(0)
   expect(calls).toHaveLength(1)
-  expect(calls[0][1].at(-1)).toContain('/app-run.mjs')
-  expect(JSON.parse(calls[0][2].input)).toEqual({ command: 'app-maestro', flow: 'reply-speaker' })
+  expect(calls[0][1].at(-1)).toContain('/macmini-lab-bootstrap.mjs')
+  expect(sshInvocation('app-maestro', 'home', undefined, 'reply-speaker').args.at(-1)).toContain('/app-run.mjs')
+  expect(jsonBody(calls[0][2].input)).toEqual({ command: 'app-maestro', flow: 'reply-speaker' })
 })
 
 
@@ -135,7 +144,8 @@ test('attention UI evidence uses the locked browser lane and a test-only baselin
  const remote=readFileSync(new URL('./macmini-ui-remote.mjs',import.meta.url),'utf8')
  const receiver=readFileSync(new URL('./macmini-browser-snapshot.mjs',import.meta.url),'utf8')
  expect(remote).toContain("['design-unify-shots.spec.ts','cc-alive-shots.spec.ts']")
- expect(receiver).toContain("['cc-alive-shots.spec.ts','apps/desktop/playwright/cc-alive-shots.spec.ts']")
+ expect(receiver).toContain("target === 'browser' ? browserHarness : []")
+ expect(browserHarness).toContainEqual(['cc-alive-shots.spec.ts','apps/desktop/playwright/cc-alive-shots.spec.ts'])
  expect(supportsBrowserSnapshot('cc-alive-2;echo x')).toBe(false)
  expect(supportsAppSnapshot('../cc-alive-2')).toBe(false)
  expect(remote).toContain("selected.appRoot !== config.appRoot")

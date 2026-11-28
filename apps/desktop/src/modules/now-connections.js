@@ -13,13 +13,14 @@
 
 import { HOOKS_RUN, makeHooksAction } from './terminal-hooks.js'
 import { V1, v1 } from '../daemon-client.js'
+import { usageWindowDisplay } from '../generated/subscription-usage-display.js'
 import { mountButlerStatus } from './butler-status.js'
 
 /** @typedef {'ok'|'warn'|'bad'|'unknown'} Dot */
 /** @typedef {'ready'|'behind'|'not_loaded'|'unknown'} State */
 /** @typedef {{id:string,name:string,state:'ok'|'fallback'|'needs_you'|'off',code:string,reason:string,action?:{label:string,where:string,url?:string,run?:string}}} Capability */
 /** @typedef {{id:string,kind:string,name:string,label?:string,state:State,latestAt:number|null,syncedAt:number|null}} Source */
-/** @typedef {{generatedAt:number,sources:Source[],starting?:boolean,computers:Array<{id:string,label:string,online:boolean,since:number|null,version:string|null}>,recent:Array<{matterId:string,title:string,phase:string,at:number}>,outputs:Array<{matterId:string,name:string,mime:string,at:number}>,capabilities?:Capability[]}} Connections */
+/** @typedef {{generatedAt:number,sources:Source[],starting?:boolean,computers:Array<{id:string,label:string,online:boolean,since:number|null,version:string|null}>,recent:Array<{matterId:string,title:string,phase:string,at:number}>,outputs:Array<{matterId:string,name:string,mime:string,at:number}>,capabilities?:Capability[],subscriptionUsage?:import('@wechat-cc/protocol').ConnectionsT['subscriptionUsage']}} Connections */
 
 const STALE_AFTER_MS = 30_000
 /** @param {number} ms */
@@ -106,6 +107,24 @@ function row(cls, d, name, detail) {
   return li
 }
 
+/** @param {NonNullable<Connections['subscriptionUsage']>[number]} usage @param {number} now */
+function usageRow(usage, now) {
+  const li = el('li', 'nc-row nc-usage')
+  li.append(el('span', 'nc-name', usage.displayName))
+  for (const window of usage.windows) {
+    const { label, percent, warning } = usageWindowDisplay(window, now)
+    const line = el('div', 'nc-usage-window')
+    const track = el('div', 'nc-usage-track')
+    const fill = el('span', warning ? 'nc-usage-fill warn' : 'nc-usage-fill')
+    track.setAttribute('aria-hidden', 'true')
+    fill.style.width = `${percent}%`
+    track.append(fill)
+    line.append(el('span', 'nc-detail', label), track)
+    li.append(line)
+  }
+  return li
+}
+
 /**
  * @param {{host:HTMLElement, call:(method:'GET'|'POST', path:string, body?:Record<string, unknown>)=>Promise<unknown>, now?:()=>number, openUrl?:(url:string)=>void, openPlace?:(capabilityId:string, where:string)=>boolean}} o
  *   openPlace:能把人带到那个地方 ⇒ 带过去并返回 true;认不出 ⇒ false(这一行照旧只写提示)。
@@ -137,7 +156,7 @@ export function mountNowConnections({ host, call, now = () => Date.now(), openUr
       if (v.computers.length) parts.push(section('家里的电脑', v.computers.map(x => row('nc-computer', x.dot, x.label, x.detail))))
       parts.push(butlerHost)
       // 能力行就在大标题「CC 现在怎么样」下面,不再重复一遍同名小标题(2026-10-16)。
-      if (v.capabilities.length) parts.push(section('CC 现在怎么样', v.capabilities.map(x => {
+      const rows = v.capabilities.map(x => {
         const li = row('nc-capability', x.dot, x.name, x.label)
         // 能当场打开的(系统设置)给按钮;别的动作在桌面别处做,写成一句提示。
         if (x.action?.run === HOOKS_RUN && !stale) li.append(hooks.node(x.action.label))
@@ -150,7 +169,11 @@ export function mountNowConnections({ host, call, now = () => Date.now(), openUr
         }
         else if (x.action) li.append(el('span', 'nc-action-hint', x.action.label))
         return li
-      })))
+      })
+      for (const usage of data?.subscriptionUsage ?? []) {
+        if (usage.windows.length) rows.push(usageRow(usage, now()))
+      }
+      if (rows.length) parts.push(section('CC 现在怎么样', rows))
       if (v.sources.length) parts.push(section('来源', v.sources.map(x => row('nc-source', x.dot, x.name, x.label))))
       if (v.recent.length) parts.push(section('最近在做', v.recent.map(x => row('nc-recent', null, x.title, x.when))))
       if (v.outputs.length) parts.push(section('成果', v.outputs.map(x => row('nc-output', null, x.name, x.when))))
@@ -158,11 +181,11 @@ export function mountNowConnections({ host, call, now = () => Date.now(), openUr
     host.replaceChildren(...parts)
   }
 
-  async function refresh() {
+  async function refresh(refreshUsage = false) {
     void butler.refresh()
     const mine = ++ticket
     try {
-      const r = /** @type {Connections} */ (await v1(call, V1.connections.get))
+      const r = /** @type {Connections} */ (await v1(call, V1.connections.get, refreshUsage ? { query: { usage: 'refresh' } } : undefined))
       if (mine !== ticket) return
       if (!r || !Array.isArray(r.sources) || !Array.isArray(r.computers)) throw new Error('invalid_connections')
       data = { ...r, recent: Array.isArray(r.recent) ? r.recent : [], outputs: Array.isArray(r.outputs) ? r.outputs : [] }
@@ -179,7 +202,7 @@ export function mountNowConnections({ host, call, now = () => Date.now(), openUr
   /** 浮层打开时调:上次拉取超过 30 秒 ⇒ 先压灰再拉(终审 M2:别让上次的绿冒充现在)。 */
   function open() {
     if (data !== null && fetchedAt !== null && now() - fetchedAt > STALE_AFTER_MS) { aging = true; render() }
-    return refresh()
+    return refresh(true)
   }
 
   render()

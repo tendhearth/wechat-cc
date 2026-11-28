@@ -10,7 +10,7 @@ type Listener = () => void
 export interface Query<T> {
   get(): QueryState<T>
   subscribe(cb: Listener): Unsubscribe
-  refresh(): Promise<void>
+  refresh(loadOverride?: (lang: Lang) => Promise<T>): Promise<void>
   /** 挂载时调用:没数据(且不在 30 秒失败退避里)或数据已过期才加载;手动 refresh() 不受限。 */
   mount(): Promise<void>
   /**
@@ -60,12 +60,12 @@ export function makeStore(backend: Backend, opts: { lang?: Lang } = {}) {
     const q: Query<T> = {
       get: () => state,
       subscribe: ls.add,
-      refresh() {
-        if (inflight) return inflight
+      refresh(loadOverride) {
+        if (inflight) return loadOverride ? inflight.then(() => q.refresh(loadOverride)) : inflight
         set({ ...state, loading: true })
         const at = (inflightAt = clock())
         const g = gen, l = lang
-        inflight = Promise.resolve().then(() => load(l)).then(
+        inflight = Promise.resolve().then(() => (loadOverride ?? load)(l)).then(
           data => { freshGen = g; failedAt = 0; set({ data, loading: false, syncedAt: at }) },
           e => { if (g === gen) failedAt = Date.now(); set({ ...state, loading: false, error: e instanceof BackendError ? e.code : 'unknown' }) },
         ).finally(() => {

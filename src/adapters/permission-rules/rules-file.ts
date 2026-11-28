@@ -5,6 +5,10 @@
  * 单条坏了(then 不认识、正则编不过、正则太长)⇒ 只丢那一条,其余照用,错误里写出它的 id。
  * 正则限 200 字、匹配只看命令前 2000 字 —— 主人手写的 `(a+)+$` 也拖不垮一次拍板。
  */
+import { withRulesFileLock } from './rules-lock'
+import { readFileSync } from 'node:fs'
+import { writeFileAtomic } from '../../lib/json-file'
+import { rememberWhen, sameRememberWhen } from './remember'
 import { homedir } from 'node:os'
 import { canonPath, canonText, isAbsolutePath, isUnder, type Platform } from './paths'
 import type { PermissionAsk, Rule, RuleWhen, RulesFile, Verdict } from '../../domain/permission-rules/types'
@@ -33,8 +37,10 @@ export function unsafePattern(src: string): string | null {
   return null
 }
 
+// The old parser rejects this verdict and the old CLI refuses to rewrite the file.
+const REMEMBERED_ALLOW = 'allow_exact'
 const VERDICTS: readonly Verdict[] = ['allow', 'ask', 'deny']
-const WHEN_KEYS: readonly (keyof RuleWhen)[] = ['surface', 'provider', 'project', 'tool', 'command', 'paths', 'scope', 'commandHash']
+const WHEN_KEYS: readonly (keyof RuleWhen)[] = ['surface', 'provider', 'project', 'tool', 'command', 'paths', 'scope', 'commandHash', 'projectExact', 'commandPrefix', 'pathExact']
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
@@ -64,8 +70,11 @@ function parseRule(item: unknown, i: number): Rule | string {
   if (!item || typeof item !== 'object' || Array.isArray(item)) return `第 ${i + 1} 条规则不是对象,已丢弃`
   const o = item as Record<string, unknown>
   const id = typeof o.id === 'string' && o.id.trim() ? o.id.trim() : fallbackId
-  if (!VERDICTS.includes(o.then as Verdict)) return `规则 ${id}:then 只能是 allow / ask / deny,已丢弃`
-  const whenRaw = o.when && typeof o.when === 'object' && !Array.isArray(o.when) ? o.when as Record<string, unknown> : {}
+  const exact = o.then === REMEMBERED_ALLOW || id.startsWith('card-')
+  const verdict = o.then === REMEMBERED_ALLOW ? 'allow' : o.then as Verdict
+  if (!VERDICTS.includes(verdict)) return `规则 ${id}:then 只能是 allow / ask / deny,已丢弃`
+  if (!o.when || typeof o.when !== 'object' || Array.isArray(o.when)) return `规则 ${id}:when 必须是对象,已丢弃`
+  const whenRaw = o.when as Record<string, unknown>
   const when: RuleWhen = {}
   for (const k of WHEN_KEYS) {
     const val = whenRaw[k]
@@ -81,7 +90,12 @@ function parseRule(item: unknown, i: number): Rule | string {
     ;(when as Record<string, string>)[k] = val
   }
   if ((when.scope || when.commandHash) && (when.surface !== 'workbench' || !when.scope || !/^[a-f0-9]{64}$/.test(when.commandHash ?? ''))) return `规则 ${id}:任务规则必须限定 workbench、scope 和完整 commandHash,已丢弃`
-  const rule: Rule = { id, when, then: o.then as Verdict }
+  if (exact || when.projectExact || when.commandPrefix || when.pathExact) {
+    if (!when.projectExact || !when.tool || !!when.commandPrefix === !!when.pathExact ||
+        Object.keys(whenRaw).some(k => !['projectExact', 'tool', 'commandPrefix', 'pathExact'].includes(k)))
+      return `规则 ${id}:卡片规则必须限定确切项目、工具和一种操作范围,已丢弃`
+  }
+  const rule: Rule = { id, when, then: verdict }
   if (typeof o.note === 'string' && o.note.trim()) rule.note = o.note.trim()
   return rule
 }
@@ -109,7 +123,23 @@ export function withStarterRules(current: RulesFile | null): RulesFile | null {
 }
 
 export function serializeRulesFile(f: RulesFile): string {
-  return JSON.stringify(f, null, 2) + '\n'
+  const rules = f.rules.map(rule => rule.then === 'allow' && rule.when.projectExact
+    ? { ...rule, then: REMEMBERED_ALLOW } : rule)
+  return JSON.stringify({ ...f, rules }, null, 2) + '\n'
+}
+
+export function editRulesFile(path: string, mutate: (current: RulesFile | null) => RulesFile | null): boolean {
+  return withRulesFileLock(path, () => {
+    let raw: string | undefined
+    try { raw = readFileSync(path, 'utf8') }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+    const parsed = raw === undefined ? null : parseRulesFile(raw)
+    if (parsed?.errors.length) throw Error(`规则文件有错,先手动修好(${path}):\n${parsed.errors.join('\n')}`)
+    const next = mutate(parsed?.file ?? null)
+    if (!next) return false
+    writeFileAtomic(path, serializeRulesFile(next), { mode: 0o600 })
+    return true
+  })
 }
 
 const expandHome = (p: string) => (p === '~' ? homedir() : p.startsWith('~/') ? homedir() + p.slice(1) : p)
@@ -138,6 +168,10 @@ function chatPathsKnown(ask: PermissionAsk, platform: Platform): ask is Permissi
 }
 
 function matches(when: RuleWhen, ask: PermissionAsk, platform: Platform): boolean {
+  if (when.projectExact) {
+    const current = rememberWhen(ask)
+    return !!current && sameRememberWhen(when, current)
+  }
   if (when.scope && when.scope !== ask.scope) return false
   if (when.commandHash && when.commandHash !== ask.commandHash) return false
   if (when.surface && when.surface !== ask.surface) return false

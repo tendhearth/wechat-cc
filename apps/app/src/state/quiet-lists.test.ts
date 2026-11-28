@@ -83,6 +83,23 @@ describe('matter list loading evidence', () => {
       expect(el('connections-cap-terminal')?.textContent).toContain('Codex needs your confirmation again')
     } finally { vi.useRealTimers() }
   })
+  it('requests subscription usage on focus and only reads cached usage on a status poll', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const demo = makeDemoBackend({ lang: 'en' })
+      const connections = vi.fn<Backend['connections']>(async () => ({
+        generatedAt: Date.now(), sources: [], computers: [], recent: [], outputs: [],
+        subscriptionUsage: [{ providerId: 'codex', displayName: 'Codex', windows: [{ durationMins: 300, usedPercent: 81, resetsAt: null }] }],
+      }))
+      await mount({ ...demo, connections }, createElement(Connections))
+      expect(el('connections-usage-codex')?.textContent).toContain('5h 81%')
+      expect(el('connections-usage-claude')).toBeNull()
+      expect(connections.mock.calls).toEqual([[true]])
+      await act(async () => { await vi.advanceTimersByTimeAsync(CONNECTIONS_POLL_MS) })
+      expect(connections.mock.calls).toEqual([[true], []])
+    } finally { vi.useRealTimers() }
+  })
+
   it('useWork distinguishes an unread list from a successfully read empty list', async () => {
     let resolve!: (rows: MatterT[]) => void
     await mount(backendWithMatters(() => new Promise(r => { resolve = r })), createElement(WorkProbe))

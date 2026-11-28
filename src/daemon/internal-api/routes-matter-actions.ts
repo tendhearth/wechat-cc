@@ -111,14 +111,17 @@ export function matterActionRoutes(deps: InternalApiDeps): RouteTable {
     }),
 
     // 批准 / 拒绝一项权限。手机:带 runId(这一轮换了、这一项不在了 ⇒ permission_stale)。桌面(原 /v1/workbench/permission):没有 runId。
-    'POST /v1/matter/permission': action(async (m, _q, body) => {
+    'POST /v1/matter/permission': action(async (m, _q, body, caller) => {
       const b = objectBody(body)
       if (!b || typeof b.id !== 'string' || !ID.test(b.id) || typeof b.runId !== 'string' || !UUID.test(b.runId) || typeof b.requestId !== 'string' || !UUID.test(b.requestId)) return phoneInvalid('invalid_request')
       if (b.decision !== 'allow' && b.decision !== 'deny' && b.decision !== 'allow_task') return phoneInvalid('invalid_decision')
+      if (b.remember !== undefined && (b.remember !== true || b.decision !== 'allow')) return phoneInvalid('invalid_request')
+      if (b.remember && (caller?.origin !== 'device' || caller.tier !== 'admin')) return { status: 403, body: { error: 'forbidden' } }
+      const decision = b.remember ? 'allow_always' : b.decision
       let reason: string | undefined
       try { reason = permissionReason(b.reason, b.decision) } catch { return phoneInvalid('invalid_request') }
-      try { reason ? m.permission(b.id, b.runId, b.requestId, b.decision, reason) : m.permission(b.id, b.runId, b.requestId, b.decision); return { status: 200, body: { ok: true } } } catch (err) { return phoneError(err) }
-    }, async (m, _q, body) => {
+      try { const rule = await (reason ? m.permission(b.id, b.runId, b.requestId, decision, reason) : m.permission(b.id, b.runId, b.requestId, decision)); return { status: 200, body: { ok: true, ...(rule ? { rule } : {}) } } } catch (err) { return phoneError(err) }
+    }, async (m, _q, body, caller) => {
       const value = objectBody(body)
       const id = typeof value?.id === 'string' ? value.id : ''
       const requestId = typeof value?.requestId === 'string' ? value.requestId : ''
@@ -126,7 +129,10 @@ export function matterActionRoutes(deps: InternalApiDeps): RouteTable {
       if (!TASK_ID.test(id) || !UUID.test(requestId) || (decision !== 'allow' && decision !== 'deny' && decision !== 'allow_task')) return invalid()
       let reason: string | undefined
       try { reason = permissionReason(value?.reason, decision) } catch { return invalid() }
-      try { await (reason ? m.desktop.resolvePermission(id, requestId, decision, reason) : m.desktop.resolvePermission(id, requestId, decision)); return { status: 200, body: { ok: true } } } catch (err) { return mappedError(err) }
+      if (value?.remember !== undefined && (value.remember !== true || decision !== 'allow')) return invalid()
+      if (value?.remember && (caller?.origin !== 'operator' || caller.tier !== 'admin')) return { status: 403, body: { error: 'forbidden' } }
+      const explicitDecision = value?.remember ? 'allow_always' : decision
+      try { const rule = await (reason ? m.desktop.resolvePermission(id, requestId, explicitDecision, reason) : m.desktop.resolvePermission(id, requestId, explicitDecision)); return { status: 200, body: { ok: true, ...(rule ? { rule } : {}) } } } catch (err) { return mappedError(err) }
     }),
 
     // 回答提问。手机:带 runId(换了 ⇒ question_stale),answers 至多 PHONE_ANSWER_MAX_JSON。桌面(原 /v1/workbench/answer):没有 runId,至多 20000。

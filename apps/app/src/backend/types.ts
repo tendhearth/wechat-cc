@@ -125,7 +125,7 @@ export interface Backend {
   reviewCommentDelete(p: { id: string; commentId: string }): Promise<void>
   /** 把这件事所有草稿一起发给执行者;requestId 同一批重点沿用。不自动重发:超时 ⇒ 不确定。 */
   reviewCommentsSend(p: { id: string; requestId: string; summary?: string }): Promise<{ sent: number; remaining: number; skippedDiscarded: number }>
-  decide(p: { id: string; runId: string; requestId: string; decision: 'allow' | 'deny' | 'allow_task'; reason?: string }): Promise<void>
+  decide(p: { id: string; runId: string; requestId: string; decision: 'allow' | 'deny' | 'allow_task'; reason?: string; remember?: true }): Promise<void | string>
   permissionScript(p: { id: string; requestId: string; path: string; sha256: string; offset: number }): Promise<{content:string;nextOffset:number|null}>
   /** answers 形状与 daemon validateUserInputAnswers 一致:每题一个 string[](单选 1 个;多选 1–8 个、不重复;每条 ≤ 4000 字)。null = 不回答。 */
   answer(p: { id: string; runId: string; requestId: string; answers: Record<string, string[]> | null }): Promise<void>
@@ -218,7 +218,7 @@ export interface Backend {
   /** 表情库里的一张图(GET /m/api/sticker/<file>?b64=1)。不在库里 ⇒ BackendError('not_found')。 */
   sticker(file: string): Promise<{ mime: string; data: string }>
   /** CC 的连接快照(手机版,没有 detail)。 */
-  connections(): Promise<ConnectionsT>
+  connections(refreshUsage?: boolean): Promise<ConnectionsT>
   checkup(): Promise<CheckupView>
   checkupEstimate(): Promise<CheckupEstimate>
   checkupRun(expectedTargetKey:string): Promise<CheckupView>
@@ -239,7 +239,7 @@ export interface Backend {
   /** 终端里的会话(GET /m/api/cli/sessions,2026-10-14):主人在 CC 外面开的 Claude Code / Codex。等你批准的在前。 */
   cliSessions(sessionId?: string): Promise<CliSessionRowT[]>
   /** 拍板终端会话等批准的那一项(同微信「y/n 码」)。码已失效 ⇒ 'stale';终端自己在问(主人在电脑前)⇒ 'cli_not_actionable'。 */
-  cliPermission(p: { sessionId: string; hash?: string; decision: 'allow' | 'deny' }): Promise<void>
+  cliPermission(p: { sessionId: string; hash?: string; decision: 'allow' | 'deny'; remember?: true }): Promise<void | string>
   /** 对终端会话接着说一句(同微信「@码」):收下即回,结果成为这条会话的下一句。在跑 ⇒ 'busy';已结束 ⇒ 'cli_ended';在别的电脑上 ⇒ 'cli_remote'。 
    *  sayId:送进开着的窗口时 daemon 给的,对上会话行 last_say.id 才知道送没送到;不开窗口的那条路 / 老 daemon ⇒ null。 */
   cliStop?(sessionId:string,runId:string):Promise<void>

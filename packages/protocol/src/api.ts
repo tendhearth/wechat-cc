@@ -198,7 +198,7 @@ export const MatterPermission = z.object({
   id: z.string(), taskId: z.string(), tool: z.string(), description: z.string(), createdAt: z.number(),
   display: permissionDisplayWire, cwd: permissionCwdWire, mcp: permissionMcpTargetWire,
   showSnapshotNotice: z.boolean().optional(),
-  canAllowTask: z.boolean().optional(), canDenyWithReason: z.boolean().optional(), scripts: z.array(PermissionScript).optional(),
+  rememberRule: z.string().optional(), canAllowTask: z.boolean().optional(), canDenyWithReason: z.boolean().optional(), scripts: z.array(PermissionScript).optional(),
 })
 
 const QuestionOption = z.object({ label: z.string(), description: z.string() })
@@ -565,6 +565,11 @@ export const ChatPage = z.object({ receipt: z.object({requestId:z.string(),statu
 
 export const ConnectionSource = z.object({ id: z.string(), kind: z.enum(['wechat_history', 'knowledge', 'plugin']), name: z.string(), label: z.string().optional(), state: z.enum(['ready', 'behind', 'not_loaded', 'unknown']), latestAt: z.number().nullable(), syncedAt: z.number().nullable() })
 export const Connections = z.object({
+  subscriptionUsage: z.array(z.object({
+    providerId: z.enum(['claude', 'codex']),
+    displayName: z.string(),
+    windows: z.array(z.object({ usedPercent: z.number(), resetsAt: z.number().nullable(), durationMins: z.number().nullable() })),
+  })).optional(),
   generatedAt: z.number(), sources: z.array(ConnectionSource),
   // 插件快照还没出来 ⇒ daemon 真的还在启动。可选:老 daemon 不带(手机当不知道是否在启动)。
   starting: z.boolean().optional(),
@@ -615,10 +620,11 @@ export type CliActivityPageT = z.infer<typeof CliActivityPage>
 
 export const CliPendingPermission = z.object({
   tool: z.string(), summary: z.string().nullable(), since: z.number(),
-  display: permissionDisplayWire, cwd: permissionCwdWire, truncated: z.boolean().optional(),
+  display: permissionDisplayWire, cwd: permissionCwdWire, truncated: z.boolean().optional(), rememberRule: z.string().optional(),
 })
 
 export const CliSessionRow = z.object({
+  unhooked: z.literal(true).optional(),
   run_id:z.string().optional(),
   session_id: z.string(), code: z.string(), source: z.enum(['claude', 'codex', 'cursor']),
   // displayName(收敛清单 ⑥):这家执行者的正式名字,daemon 定;老 daemon 不带 ⇒ 退回 source。
@@ -657,6 +663,7 @@ export const OverseerToday = z.object({
   needsYou: z.array(TodayNeed), done: z.array(TodayItem), running: z.array(TodayItem), stuck: z.array(TodayStuck),
   counts: z.object({ needsYou: z.number(), done: z.number(), running: z.number(), stuck: z.number() }),
   unavailable: z.array(z.enum(['terminal', 'together'])),
+  ccDecided: z.object({ rulesAdded: z.array(z.string()).optional() }).passthrough().nullable().optional(),
 })
 export type TodayItemT = z.infer<typeof TodayItem>
 export type OverseerTodayT = z.infer<typeof OverseerToday>
@@ -742,7 +749,7 @@ const PHONE_API = {
   'GET /m/api/sessions': z.union([z.object({ ok: z.literal(true), items: z.array(NativeSessionRow), nextCursor: z.string().nullable(), names: z.record(z.string(), z.string()).optional() }), PhoneErrorResponse]),
   'GET /m/api/cli/sessions': z.union([z.object({ ok: z.literal(true), sessions: z.array(CliSessionRow) }), PhoneErrorResponse]),
   // 错误码:not_found 404;cli_not_actionable(终端自己在问,没开码)/ cli_permission_stale(码已失效)409。
-  'POST /m/api/cli/permission': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
+  'POST /m/api/cli/permission': z.union([z.object({ ok: z.literal(true), rule: z.string().optional() }), PhoneErrorResponse]),
   // 收下即回;结果成为这条会话的下一句 last_summary。错误码:cli_session_busy(在跑 / 在等批准)/ cli_session_ended / cli_session_remote(在别的电脑上)409,not_found 404。
   // say_id:只在送进开着的窗口时给,对上会话行的 last_say.id 才是这一句的结果
   'POST /m/api/cli/say': z.union([z.object({ ok: z.literal(true), accepted: z.literal(true), say_id: z.string().optional() }), PhoneErrorResponse]),
@@ -762,7 +769,7 @@ const PHONE_API = {
   'GET /m/api/entry/options': z.union([z.object({ ok: z.literal(true) }).extend(EntryOptions.shape), PhoneErrorResponse]),
   'POST /m/api/matter/create': z.union([z.object({ ok: z.literal(true) }).extend(EntryResult.shape), PhoneErrorResponse]),
   'GET /m/api/matter/create-receipt': z.union([z.object({ ok: z.literal(true) }).extend(EntryResult.shape), PhoneErrorResponse]),
-  'POST /m/api/matter/permission': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
+  'POST /m/api/matter/permission': z.union([z.object({ ok: z.literal(true), rule: z.string().optional() }), PhoneErrorResponse]),
   'POST /m/api/matter/stop': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   // run / stop(2026-10-20)回分支 + 脚本状态 + 端口;没批 ⇒ 428 script_needs_computer(批准只在电脑上),在跑 409,没有 run 脚本 422 no_scripts。
   'POST /m/api/matter/worktree': z.union([PhoneWorktreeResult, PhoneErrorResponse]),

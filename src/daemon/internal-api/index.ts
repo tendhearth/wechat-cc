@@ -411,8 +411,8 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
       ? (() => { try { return deps.holdBusy?.(`api:${routeKey}`) } catch { return undefined } })()
       : undefined
     try {
-      // 调用方断开(MCP 子进程死了 / 工具调用被客户端放弃)⇒ signal 中止。只有长轮询的路由(GET /v1/cli/say)读它:
-      // 挂着的等待不能当成「还有人在等」(terminal_say 评审 #2a,2026-10-24)。
+      // 调用方断开(MCP 子进程死了 / hook 放弃等待)⇒ signal 中止。
+      // 终端长轮询和权限登记用它取消已经没有调用方的等待。
       // onSent:回包真写出去了才调 —— terminal_say 据此才算「回话被领走」;没写出去就留给它自己的兜底(告诉主人),评审 #662 二轮 #1。
       // 怎么判「断开」「写出去了」是传输层的事(见下面 handleRequest / panelDispatch)。
       const signal = inp.io.signal()
@@ -519,7 +519,8 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
             res.on('close', gone)
             sock?.on('close', gone)
             // 登记前就已经断了(比如在读 body / 校验那段时间里断的)⇒ 那些事件不会再来,直接算断开(评审 #662 二轮 #2)
-            if (sock?.destroyed || req.destroyed) gone()
+            // 正常读完 POST 也会自动销毁请求流，完整的请求体仍可在同一连接上回包。
+            if (sock?.destroyed || (req.destroyed && !req.complete)) gone()
             return ac.signal
           },
         },

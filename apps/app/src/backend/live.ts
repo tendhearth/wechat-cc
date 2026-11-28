@@ -454,8 +454,8 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async sticker(file) {
       return strip(await api.stickers.get({ suffix: file, query: { b64: 1 } }))
     },
-    async connections() {
-      return strip(await api.connections.get())
+    async connections(refreshUsage) {
+      return strip(await api.connections.get(refreshUsage ? { query: { usage: 'refresh' }, retry: false } : { query: {} }))
     },
     checkup:()=>api.checkup.get(),
     checkupEstimate:()=>api.checkup.estimate({body:{full:false}}),
@@ -485,11 +485,11 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       return { matterId: r.matterId }
     },
     async cliSessions(sessionId) {
-      return (await api.cli.sessions({ query: sessionId ? { session_id: sessionId } : {} })).sessions
+      return (await api.cli.sessions({ query: sessionId ? { session_id: sessionId } : { unhooked: '1' } })).sessions
     },
     async cliPermission(p) {
       // 有码就带码:防止这期间换了一项待批,手机批到了没看过的那一项。
-      await api.cli.permission({ body: { session_id: p.sessionId, ...(p.hash ? { hash: p.hash } : {}), decision: p.decision } })
+      return (await api.cli.permission({ body: { session_id: p.sessionId, ...(p.hash ? { hash: p.hash } : {}), decision: p.decision, ...(p.remember ? { remember: true } : {}) } })).rule
     },
     cliStop:async(sessionId,runId)=>{await api.cli.stop({body:{session_id:sessionId,run_id:runId,confirmed:true}})},
     async cliSay(sessionId, text) {
@@ -511,7 +511,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       return (await api.home.seen({ body: { until } })).seen_until
     },
     async decide(p) {
-      await api.matters.permission({ body: { id: p.id, runId: p.runId, requestId: p.requestId, decision: p.decision, ...(p.reason ? { reason: p.reason } : {}) } })
+      return (await api.matters.permission({ body: { id: p.id, runId: p.runId, requestId: p.requestId, decision: p.decision, ...(p.reason ? { reason: p.reason } : {}), ...(p.remember ? { remember: true } : {}) } })).rule
     },
     async permissionScript(p) { return await api.permissions.script({query:p}) },
     async artifactChunk(p) {

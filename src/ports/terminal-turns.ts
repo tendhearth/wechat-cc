@@ -23,7 +23,7 @@ export interface TerminalTurnLog {
   /** 同步的权限请求(cli-permission-relay):等你那一步。同一件事已经有一张开着的卡 ⇒ 不再加。 */
   permissionAsked(req: { source: string; session_id: string; cwd: string; tool_name: string; summary?: string | null | undefined; machine?: string | undefined; display?: PermissionDisplay | undefined; execution_cwd?: string | undefined; truncated?: boolean | undefined }, at: number): void
   /** 那张卡落定:allow ⇒ 做完;其余(deny / timeout / undelivered / unknown)⇒ failed。 */
-  permissionSettled(sessionId: string, status: string): void
+  permissionSettled(sessionId: string, status: string, ownerPermission?: import('../domain/permission-rules/types').RememberHistory): boolean | void
   /**
    * 这个会话的那件事(没有就建,同 event 第一次见到时)。读记录进步之前先确保有(M4b,Codex 评审);看的那条路首见(M6d)也走这里。
    * 登记处里的老会话在 v100 都建上了(按登记处当时的状态),之后没有的只剩写轮失败的那几条 —— 建成 open(歇着)= 登记处读时的默认。

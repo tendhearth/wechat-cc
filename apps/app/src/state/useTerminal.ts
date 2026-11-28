@@ -69,8 +69,14 @@ export function useTerminalActions() {
   }, [store, backend])
   return {
     pending,
-    decide: (s: Pick<CliSessionRowT, 'session_id' | 'pending'>, decision: 'allow' | 'deny') =>
-      run(`cli:decide:${s.session_id}`, () => backend.cliPermission({ sessionId: s.session_id, ...(s.pending?.hash ? { hash: s.pending.hash } : {}), decision })),
+    decide: async (s: Pick<CliSessionRowT, 'session_id' | 'pending'>, decision: 'allow' | 'deny', remember?: true) => {
+      const receipt: { rule?: string } = {}
+      const error = await run(`cli:decide:${s.session_id}`, async () => {
+        const rule = await backend.cliPermission({ sessionId: s.session_id, ...(s.pending?.hash ? { hash: s.pending.hash } : {}), decision, ...(remember ? { remember } : {}) })
+        if (typeof rule === 'string') receipt.rule = rule
+      })
+      return { error, rule: receipt.rule }
+    },
     /** 说一句:error 同上;sayId 只在送进开着的窗口时有(对上会话行的 last_say 才知道送没送到)。 */
     say: async (sessionId: string, text: string): Promise<{ error: string | null; sayId: string | null }> => {
       let sayId: string | null = null

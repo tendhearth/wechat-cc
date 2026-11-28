@@ -1,13 +1,15 @@
 // @ts-check
 import { escapeHtml } from '../view.js'
 import { STATUS_WORDS } from '../generated/status-table.js'
-/** @typedef {{session_id:string,status:string,project?:string,source?:string,displayName?:string,last_summary?:string|null,last_event_at?:number,stale?:boolean,now?:{text?:string}|null}} Session */
+/** @typedef {{session_id:string,status:string,project?:string,source?:string,displayName?:string,last_summary?:string|null,last_event_at?:number,stale?:boolean,unhooked?:true,now?:{text?:string}|null}} Session */
 /** @type {Map<string,Session>} */ let current=new Map()
 let actionsSupported=false
+const UNHOOKED_NOTE='开 hook 之前开的，重开这个会话才能接上'
 /** @param {boolean} supported */
 export function setTerminalActionsSupported(supported){actionsSupported=supported;paintTerminalReferences()}
 /** The desktop's existing terminal projection is read-only. It never becomes a task or a new chat. @param {Session|undefined} session */
 export function terminalWord(session){
+  if(session?.unhooked)return '没接上'
   if(!session||session.stale)return '尚未同步'
   return session.status==='waiting'?STATUS_WORDS.waiting:session.status==='running'?STATUS_WORDS.working:session.status==='idle'?STATUS_WORDS.replied:session.status==='ended'?'会话已结束':'尚未同步'
 }
@@ -21,7 +23,8 @@ export function paintTerminalReferences(){
   for(const row of document.querySelectorAll('[data-terminal-reference]')){
     const id=/** @type {HTMLElement} */(row).dataset.terminalReference,session=id?current.get(id):undefined
     const state=row.querySelector('[data-terminal-state]');if(state)state.textContent=terminalWord(session)
-    const note=row.querySelector('.converse-terminal-note');if(note&&actionsSupported&&!note.querySelector('[data-open-terminal]')){const button=document.createElement('button');button.type='button';button.dataset.openTerminal=id;button.textContent='看过程、接着说或停止';note.replaceChildren(button)}
+    const note=row.querySelector('.converse-terminal-note');if(note&&session?.unhooked)note.textContent=UNHOOKED_NOTE
+    else if(note&&actionsSupported&&!note.querySelector('[data-open-terminal]')){const button=document.createElement('button');button.type='button';button.dataset.openTerminal=id;button.textContent='看过程、接着说或停止';note.replaceChildren(button)}
     if(!session)continue
     const title=row.querySelector('[data-terminal-title]');if(title)title.textContent=session.project||'终端会话'
     const step=row.querySelector('[data-terminal-step]');if(step)step.textContent=session.now?.text||session.last_summary||''
@@ -37,6 +40,13 @@ export function openComputerSessions(sessions,select,history){
   const header=document.createElement('header');header.append(title,close);close.className='wb-new'
   const body=document.createElement('div');body.className='wb-handoff-body';dialog.append(header,body)
   for(const session of sessions()){
+    if(session.unhooked){
+      const row=document.createElement('div')
+      const name=document.createElement('div');name.textContent=session.project||'终端会话'
+      const note=document.createElement('small');note.className='converse-terminal-note';note.textContent=UNHOOKED_NOTE
+      row.append(name,note);body.append(row)
+      continue
+    }
     const button=document.createElement('button');button.type='button';button.className='wb-btn';button.textContent=`${session.project||'终端会话'} · ${terminalWord(session)}`
     button.onclick=()=>{const latest=sessions().find(s=>s.session_id===session.session_id);if(latest){dialog.close();select(latest)}else button.textContent='这段会话暂时读不到，请重新打开'}
     body.append(button)

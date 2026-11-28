@@ -455,6 +455,7 @@ const ROUTE_TABLE = {
   'POST /v1/calendar/enabled': { module: 'calendar', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   // 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):改主人 ~/.claude/settings.json 与 $CODEX_HOME/hooks.json,admin。
   // 桌面(原 lib.rs 注释):「CC 现在怎么样」与引导页的「接上」/「修复」,主人点了确认才调。
+  'POST /v1/cli/focus': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
   'POST /v1/cli/hooks/install': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/cli/hooks/uninstall': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   // CC 的信(2026-10-16):信是写给主人的私事;开关改主人的 companion 配置。admin。

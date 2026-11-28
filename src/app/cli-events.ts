@@ -17,7 +17,7 @@ import { PRESENT_IDLE_S } from '../lib/owner-presence'
 import { cliSourceLabel } from '../domain/cli-session-digest'
 import { sortCliSessionViews, toCliSessionView } from '../domain/cli-session-view'
 import { stripMarkdown, summarizeOneLine as oneLine } from '../domain/one-line'
-import type { CliSessionRow, CliSessionStore, CliSessionView } from '../ports/cli-session'
+import type { CliSessionIdentity, CliSessionListOptions, CliSessionRow, CliSessionStore, CliSessionView } from '../ports/cli-session'
 import type { TerminalTurnLog } from '../ports/terminal-turns'
 
 export type CliSource = 'claude' | 'codex' | 'cursor'
@@ -41,6 +41,7 @@ export interface CliEvent {
   /** hook 那头探到的本机空闲秒数;探不到就不带。 */
   idle_s?: number
   /** hook 那头的主机名。与 daemon 所在机器不同 ⇒ 「那边」。 */
+  terminal?: import('@wechat-cc/protocol').TerminalLocation | undefined
   machine?: string
   /** 经 A2A 从哪只手转来的(脑侧由已验证的 agent id 填,永远不信 body 里的)。 */
   origin_agent?: string
@@ -130,16 +131,12 @@ export interface CliPushItem {
 }
 
 /** 权限请求里登记处用得到的那几样(CliPermissionRequest 的子集,不 import 它免得成环)。 */
-export interface CliPermissionAsk {
-  source: CliSource
-  session_id: string
-  cwd: string
+export interface CliPermissionAsk extends CliSessionIdentity {
   tool_name: string
   summary?: string | undefined
   display?: PermissionDisplay | undefined
   execution_cwd?: string | undefined
   truncated?: boolean | undefined
-  machine?: string | undefined
 }
 
 export interface CliEventHub {
@@ -159,9 +156,9 @@ export interface CliEventHub {
   /** 权限请求来了(中继 open 时,在场判断之前):登记处记 waiting + 等批准的那一项。 */
   permissionAsked(req: CliPermissionAsk): void
   /** 中继有了结果:allow / deny ⇒ 回到 running;过期 / 没送到 ⇒ 终端自己会问,仍是 waiting。 */
-  permissionSettled(sessionId: string, status: string): void
+  permissionSettled(sessionId: string, status: string, ownerPermission?: import('../domain/permission-rules/types').RememberHistory): boolean
   /** 登记处的列表(内部 API / 手机):等你批准的在前,其余按最近事件倒序;stale 已折算。 */
-  list(opts?: { includeEnded?: boolean; limit?: number }): CliSessionView[]
+  list(opts?: CliSessionListOptions): CliSessionView[]
   pending(): { session_id: string; kind: CliEventKind }[]
   /** 把合并窗里攒着的立刻发掉(测试 / 关机用)。 */
   flush(): Promise<void>
@@ -222,9 +219,10 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
   }
 
   /** 这件事的轮与步(M4a)写失败只记日志 —— 钩子的回包和推送那条路都不能因此断。 */
-  function turnsDo(what: string, fn: (turns: TerminalTurnLog) => void): void {
-    if (!deps.turns) return
-    try { fn(deps.turns) } catch (err) { deps.log('CLI_TURNS', `${what} failed: ${err instanceof Error ? err.message : String(err)}`) }
+  function turnsDo(what: string, fn: (turns: TerminalTurnLog) => boolean | void): boolean {
+    if (!deps.turns) return false
+    try { return fn(deps.turns) !== false }
+    catch (err) { deps.log('CLI_TURNS', `${what} failed: ${err instanceof Error ? err.message : String(err)}`); return false }
   }
 
   function isLocal(machine: string | undefined): boolean {
@@ -407,13 +405,13 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
       })
       turnsDo(`turn permission ${short(req.session_id)}`, (turns) => turns.permissionAsked(req, t))
     },
-    permissionSettled(sessionId, status) {
+    permissionSettled(sessionId, status, ownerPermission) {
       // 任何结果都收掉那张卡(那件事里,turns.permissionSettled):timeout / undelivered 之后终端自己问,主人在终端前答,
       // 不会再有事件,留着就会一直挂「等你批准」(评审 10-15 #1)。还在等的那一刻算一次动静(同以前 waiting → running)。
       persist(`permission settled ${short(sessionId)}`, (store) => {
         if (store.get(sessionId)?.status === 'waiting') store.seen(sessionId, now())
       })
-      turnsDo(`turn permission settled ${short(sessionId)}`, (turns) => turns.permissionSettled(sessionId, status))
+      return turnsDo(`turn permission settled ${short(sessionId)}`, (turns) => turns.permissionSettled(sessionId, status, ownerPermission))
     },
     list(opts) {
       const t = now()

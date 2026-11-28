@@ -22,7 +22,21 @@ describe('native SessionStart output', () => {
       expect(JSON.parse(opts.body as string)).toEqual({ source, session_id: 'sess-1', cwd: '/project' })
       return Response.json({ context: '项目近况' })
     }) as unknown as typeof fetch
-    expect(JSON.parse(await sessionStartOutput(state(), source, raw, { fetchImpl }))).toEqual({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: '项目近况' } })
+    expect(JSON.parse(await sessionStartOutput(state(), source, raw, { fetchImpl, env: {} }))).toEqual({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: '项目近况' } })
+  })
+  it.skipIf(process.platform !== 'darwin')('sends only environment metadata with the existing SessionStart request', async () => {
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      expect(JSON.parse(String(init.body))).toEqual({
+        source: 'claude', session_id: 'sess-1', cwd: '/project',
+        terminal: { bundle_id: 'com.apple.Terminal', term_program: 'Apple_Terminal' },
+      })
+      return Response.json({ context: '' })
+    })
+    await sessionStartOutput(state(), 'claude', raw, {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      env: { __CFBundleIdentifier: 'com.apple.Terminal', TERM_PROGRAM: 'Apple_Terminal', TERM_SESSION_ID: 'invalid"' },
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
   it('empty, bad, oversized and failed responses emit nothing', async () => {
     for (const response of [Response.json({ context: '' }), Response.json({ context: 'x'.repeat(1201) }), Response.json({ context: 1 }), new Response('bad'), new Response('', { status: 503 })]) {

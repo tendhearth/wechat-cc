@@ -165,3 +165,23 @@ it('B3 names the connection overview and reads computer, capabilities, sources, 
   expect(h.querySelector('.nc-capability .dot')!.className).toContain('unknown')
   expect(h.querySelector('.nc-capability')!.textContent).toContain('没有开启')
 })
+
+it('打开时请求额度，连接状态刷新只读缓存，已有执行者额度按窗口显示', async () => {
+  const h = document.createElement('div')
+  const usage = [
+    { providerId: 'claude', displayName: 'Claude Code', windows: [{ usedPercent: 40, durationMins: 300, resetsAt: NOW + 60_000 }] },
+    { providerId: 'codex', displayName: 'Codex', windows: [{ usedPercent: 100, durationMins: 10080, resetsAt: NOW - 60_000 }] },
+  ]
+  const call = vi.fn().mockResolvedValue({ ...snap([]), subscriptionUsage: usage })
+  const c = mountNowConnections({ host: h, call, now: () => NOW })
+  await c.open()
+  expect(call).toHaveBeenCalledWith('GET', '/v1/connections?usage=refresh')
+  const rows = [...h.querySelectorAll('.nc-usage')]
+  expect(rows.map(x => x.querySelector('.nc-name')?.textContent)).toEqual(['Claude Code', 'Codex'])
+  expect(rows[0]?.textContent).toContain('5 小时 40% · 12:01 重置')
+  expect(rows[0]?.querySelector('.nc-usage-fill.warn')).toBeNull()
+  expect(rows[1]?.textContent).toContain('本周 已用完')
+  expect(rows[1]?.querySelector('.nc-usage-fill.warn')).not.toBeNull()
+  await c.refresh()
+  expect(call).toHaveBeenLastCalledWith('GET', '/v1/connections')
+})

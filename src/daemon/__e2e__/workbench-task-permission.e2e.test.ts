@@ -39,7 +39,11 @@ it('review P1 result: executor results cannot erase owner rejection decisions',a
 it.each([false,true])('owner rejection carries its reason through WeChat and the real task service; stop at three: %s',async limit=>{
   const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-denial-e2e-'))),project=join(root,'project');mkdirSync(project)
   const db=openTestDb(),store=makeWorkbenchStore(db),registry=createProviderRegistry(),feedback:string[]=[],answers:boolean[]=[]
-  const ilink=makeIlinkAdapter({stateDir:root,db,conversationStore:makeConversationStore(db),accounts:[]})
+  const transport = await startFakeIlink()
+  const ilink=makeIlinkAdapter({stateDir:root,db,conversationStore:makeConversationStore(db),accounts:[
+    { id: 'test-account', botId: 'fixture-bot', userId: 'owner', token: 'fixture-token', baseUrl: transport.baseUrl, syncBuf: '' },
+  ]})
+  ilink.captureContextToken('owner', 'fixture-context')
   registry.register('codex',{async spawn(_project,ctx){return {
     async *dispatch(){
       yield {kind:'init' as const,sessionId:'same-session'}
@@ -59,6 +63,10 @@ it.each([false,true])('owner rejection carries its reason through WeChat and the
       const card=ilink.listPendingPermissions()[0]!
       const reject=limit||i<2
       expect(ilink.handlePermissionReply(`n ${card.code} 不要 SSH`,'stranger')).toBe(false)
+      if (!reject) {
+        const full = ilink.pendingWechatPermissionCard(card.hash)!
+        expect((await ilink.sendMessage('owner', full.text, { historyText: full.historyText })).error).toBeUndefined()
+      }
       expect(ilink.handlePermissionReply(`${reject?'n':'y'} ${card.code}${reject?' 不要 SSH':''}`,'owner')).toBe(true)
       if(i<2)await expect.poll(()=>answers.length).toBe(i+1)
       if(i<2)expect(service.detail(task.id).task.status).toBe('running')
@@ -70,7 +78,7 @@ it.each([false,true])('owner rejection carries its reason through WeChat and the
     expect(service.detail(task.id).task.error).toBeNull()
     expect(service.detail(task.id).continuation?.mode).toBe('resume')
     if(limit)expect(service.detail(task.id).events.some(e=>e.text.includes('已连续拒绝三次'))).toBe(true)
-  }finally{await service.shutdown();await ilink.flush();db.close();rmSync(root,{recursive:true,force:true})}
+  }finally{await service.shutdown();await ilink.flush();await transport.stop();db.close();rmSync(root,{recursive:true,force:true})}
 })
 
 // Real service → permission manager → shared WeChat registry → owner reply →
@@ -87,7 +95,12 @@ it('task card: uncertified CLI commands and scripts allow once, desktop settleme
   ] })
   ilink.routeChatToAccount('owner', accountId)
   ilink.captureContextToken('owner', 'fixture-context')
-  const delivery = vi.spyOn(ilink, 'sendMessage').mockImplementation(async (_chat, text) => { sent.push(text); return { msgId: 'test-delivery' } })
+  const send = ilink.sendMessage
+  const delivery = vi.spyOn(ilink, 'sendMessage').mockImplementation(async (...args) => {
+    const result = await send(...args)
+    if (!result.error) sent.push(args[1])
+    return result
+  })
   const registry = createProviderRegistry()
   registry.register('codex', { async spawn(_project, ctx) { return {
     async *dispatch() {
@@ -115,7 +128,6 @@ it('task card: uncertified CLI commands and scripts allow once, desktop settleme
     expect(store.wechatNotifications.list(task.id)[0]?.text).not.toContain(`yt ${card.code}`)
     expect(sent).toHaveLength(0) // Code registration never sends a second speech event.
     expect(ilink.handlePermissionReply(`yt ${card.code}`, 'stranger')).toBe(false)
-    expect(ilink.handlePermissionReply(`yt ${card.code}`, 'owner')).toBe(false)
     expect(ilink.handlePermissionReply(`y ${card.code}`, 'stranger')).toBe(false)
     const reminder = store.wechatNotifications.list(task.id)[0]!
     expect(reminder.text.split('\n')[1]).toBe(`〔请求 ${ilink.pendingWechatPermissionCard(card.hash)?.marker}〕`)
@@ -123,6 +135,10 @@ it('task card: uncertified CLI commands and scripts allow once, desktop settleme
     expect(await ilink.sendWorkbenchNotice?.(reminder)).toEqual({ status: 'accepted' })
     const quoted = transport.outbox()[0]?.text
     expect(quoted === reminder.text).toBe(true)
+    expect(await ilink.handlePermissionReply(`y ${card.code}`, 'owner', quoted)).toBe(true)
+    expect(sent.at(-1) === ilink.pendingWechatPermissionCard(card.hash)?.text).toBe(true)
+    expect(answers).toHaveLength(0)
+    expect(ilink.handlePermissionReply(`yt ${card.code}`, 'owner')).toBe(false)
     expect(ilink.handlePermissionReply(`y ${card.code}`, 'owner', quoted)).toBe(true)
     await expect.poll(() => answers.length).toBe(1)
     await expect.poll(() => ilink.listPendingPermissions()).toHaveLength(1)
@@ -146,6 +162,8 @@ it('task card: uncertified CLI commands and scripts allow once, desktop settleme
     expect(service.detail(task.id).permissions[0]?.description).toContain('预览是批准时的快照，运行以当时内容为准')
     const red = ilink.listPendingPermissions()[0]!
     expect(red.canAllowTask).not.toBe(true)
+    expect(await ilink.handlePermissionReply(`yt ${red.code}`, 'owner')).toBe(true)
+    expect(ilink.pendingPermissionCodeOf(red.hash)).toBe(red.code)
     expect(ilink.handlePermissionReply(`yt ${red.code}`, 'owner')).toBe(false)
     expect(ilink.handlePermissionReply(`n ${red.code}`, 'owner')).toBe(true)
     await expect.poll(() => service.detail(task.id).task.status).toBe('completed')
@@ -165,12 +183,12 @@ it('Claude Bash uses the spawned run directory and fails closed in every WeChat 
   const project = join(root, 'project')
   mkdirSync(project)
   const db = openTestDb(), registry = createProviderRegistry(), answers: boolean[] = []
-  const ilink = makeIlinkAdapter({ stateDir: root, db, conversationStore: makeConversationStore(db), accounts: [] })
-  const feedback: string[] = []
-  vi.spyOn(ilink, 'sendMessage').mockImplementation(async (_chat, text) => {
-    feedback.push(text)
-    return { msgId: 'fixture' }
-  })
+  const transport = await startFakeIlink()
+  const ilink = makeIlinkAdapter({ stateDir: root, db, conversationStore: makeConversationStore(db), accounts: [
+    { id: 'test-account', botId: 'fixture-bot', userId: 'owner', token: 'fixture-token', baseUrl: transport.baseUrl, syncBuf: '' },
+  ] })
+  ilink.captureContextToken('owner', 'fixture-context')
+  const feedback = () => transport.outbox().at(-1)?.text
   registry.register('claude', { async spawn(_project, ctx) { return {
     async *dispatch() {
       const command = 'cat example.txt'
@@ -196,6 +214,7 @@ it('Claude Bash uses the spawned run directory and fails closed in every WeChat 
     expect(inheritedCard.complete && inheritedCard.text.includes('在 ' + JSON.stringify(project))).toBe(true)
     const notice = store.wechatNotifications.list(task.id).find(item => item.requestId === inherited.hash)
     expect(notice?.text.includes('cat example.txt')).toBe(false)
+    expect((await ilink.sendMessage('owner', inheritedCard.text, { historyText: inheritedCard.historyText })).error).toBeUndefined()
     expect(ilink.handlePermissionReply('y', 'owner', inheritedCard.text)).toBe(true)
     await expect.poll(() => answers).toEqual([true])
     await expect.poll(() => ilink.listPendingPermissions()[0]?.hash).toMatch(/^[a-f0-9-]{36}$/)
@@ -208,12 +227,14 @@ it('Claude Bash uses the spawned run directory and fails closed in every WeChat 
     expect(lookup.card.complete).toBe(false)
     expect(lookup.card.text.includes(incomplete) && !lookup.card.text.includes('回「y ')).toBe(true)
     expect(await command('允许')).toBe(incomplete)
+    expect(await ilink.handlePermissionReply(`y ${unverified.code}`, 'owner')).toBe(true)
+    expect(feedback() === lookup.card.text).toBe(true)
     for (const [text, quote] of [[`y ${unverified.code}`, undefined], [`yt ${unverified.code}`, undefined], ['y', lookup.card.text]] as const) {
       expect(await ilink.handlePermissionReply(text, 'owner', quote)).toBe(true)
-      expect(feedback.at(-1)).toBe(incomplete)
+      expect(feedback()).toBe(incomplete)
       expect(answers).toEqual([true])
     }
     expect(await command('拒绝')).toContain('已拒绝')
     await expect.poll(() => answers).toEqual([true, false])
-  } finally { await service.shutdown(); await ilink.flush(); db.close(); rmSync(root, { recursive: true, force: true }) }
+  } finally { await service.shutdown(); await ilink.flush(); await transport.stop(); db.close(); rmSync(root, { recursive: true, force: true }) }
 })

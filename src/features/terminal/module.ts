@@ -28,6 +28,7 @@ export function terminalModule(f: Foundation): DaemonModule<TerminalFeature> {
       return {
         places: () => wired()?.places ?? null,
         speech: () => wired()?.speech ?? null,
+        ...(f.terminalTranscriptRoots ? { transcriptRoots: f.terminalTranscriptRoots } : {}),
         stateDir, dangerously, db, projects: f.projects, own: (n, s) => ctx.own(n, s),
         ilink: {
           ...pick(wxSend, 'sendMessage'), ...pick(wxPages, 'sharePage'), ...pick(wxLink, 'proactiveClosedSince'),

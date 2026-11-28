@@ -1,3 +1,8 @@
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { PRESESSION_EXPIRY_MS } from '../../domain/presession'
+import { onWriteHint } from '../../lib/write-hints'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { openDb, type Db } from '../../lib/db'
 import { makeCliEventHub, type CliEvent } from '../../app/cli-events'
@@ -237,7 +242,7 @@ describe('M4d:状态 / 最近一句 / 等你那一项从那件 terminal 的事�
   })
   it('登记处只留指针和事实:表里没有 status / last_summary / pending_* 这几列(v100)', () => {
     const cols = db.query<{ name: string }, []>('PRAGMA table_info(cli_sessions)').all().map(c => c.name)
-    expect(cols).toEqual(['session_id', 'source', 'cwd', 'machine', 'transcript_path', 'origin_agent', 'last_event_at', 'last_prompt_at', 'created_at'])
+    expect(cols).toEqual(['session_id', 'source', 'cwd', 'machine', 'transcript_path', 'origin_agent', 'last_event_at', 'last_prompt_at', 'created_at', 'terminal_json'])
   })
   it('没有那件事(写轮失败的那几条;老会话 v100 都补建了)⇒ 当歇着:照样列出来、「@码」认得;没有最近一句 / 等你那一项;下一个钩子事件就建上', () => {
     const store = makeCliSessionStore(db, () => clock)
@@ -276,4 +281,67 @@ describe('终端会话写口提示',()=>{
    expect(hints).toEqual([{kind:'matter',matterId:m.id},{kind:'cli',sessionId:SID}])
   }finally{off()}
  })
+})
+
+it('hook events replace a supplied terminal location and preserve it when omitted', () => {
+  const h = hub()
+  try {
+    const initial = { bundle_id: 'com.apple.Terminal', tty: '/dev/ttys012' }
+    h.ingest(ev({ terminal: initial }))
+    const saved = () => makeCliSessionStore(db, () => clock).get(SID)?.terminal_json
+    expect(saved()).toBe(JSON.stringify(initial))
+    h.observe(ev({ kind: 'stop' }))
+    expect(saved()).toBe(JSON.stringify(initial))
+    h.permissionAsked({ ...ev(), tool_name: 'Bash', terminal: { bundle_id: 'dev.warp.Warp-Stable' } })
+    expect(saved()).toBe(JSON.stringify({ bundle_id: 'dev.warp.Warp-Stable' }))
+  } finally { h.dispose() }
+})
+
+it('发现的会话只进显式请求的列表，真正的 hook 接手且重复扫描不能覆盖它', async () => {
+  const store = makeCliSessionStore(db, () => clock)
+  const h = hub()
+  const hints: unknown[] = []
+  const off = onWriteHint(db, hint => hints.push(hint))
+  const found = { sessionId: SID, cwd: '/before', source: 'claude' as const, path: '/transcripts/s.jsonl', mtimeMs: clock, ended: false }
+  try {
+    store.discover([found])
+    await Promise.resolve()
+    expect(hints).toEqual([])
+    expect(store.registeredIds()).toEqual(new Set([SID]))
+    expect(h.list({ includeUnhooked: true })).toEqual([expect.objectContaining({ session_id: SID, unhooked: true, status: 'idle', last_prompt_at: null, pending: null })])
+    expect(h.list()).toEqual([])
+    expect(h.lookup(SID)).toBeNull()
+    expect(store.get(SID)).toBeNull()
+    expect(db.query("SELECT matter_id FROM matter_bindings WHERE surface='cli' AND surface_key=?").get(SID)).toBeNull()
+
+    clock += 1000
+    h.observe(ev())
+    store.discover([found])
+    const [attached] = h.list({ includeUnhooked: true })
+    expect(attached).toMatchObject({ session_id: SID, cwd: ev().cwd, last_prompt_at: clock, status: 'running' })
+    expect(attached).not.toHaveProperty('unhooked')
+    expect(h.lookup(SID)?.session_id).toBe(SID)
+  } finally { off(); h.dispose() }
+})
+
+it('满两小时按记录改写时间隐藏，普通会话和现有修剪规则依旧生效', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cc-presession-expiry-'))
+  try {
+    clock = 1_800_000_000_000
+    const firstWrite = clock
+    const path = join(dir, 'record.jsonl')
+    writeFileSync(path, '{}')
+    utimesSync(path, firstWrite / 1000, firstWrite / 1000)
+    const store = makeCliSessionStore(db, () => clock)
+    store.touch(ev({ session_id: 'normal' }), clock - 1000)
+    store.discover([{ sessionId: SID, cwd: '/project', source: 'codex', path, mtimeMs: clock, ended: false }])
+    clock += PRESESSION_EXPIRY_MS - 1
+    expect(store.list({ includeUnhooked: true, limit: 1 })[0]?.session_id).toBe(SID)
+    clock += 1
+    expect(store.list({ includeUnhooked: true, limit: 1 })[0]?.session_id).toBe('normal')
+    utimesSync(path, clock / 1000, clock / 1000)
+    expect(store.list({ includeUnhooked: true }).map(row => row.session_id)).toContain(SID)
+    store.prune(firstWrite + CLI_SESSION_ABANDONED_RETAIN_MS + 1)
+    expect(store.registeredIds()).toEqual(new Set())
+  } finally { rmSync(dir, { recursive: true, force: true }) }
 })

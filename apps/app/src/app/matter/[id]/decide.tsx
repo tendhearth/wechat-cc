@@ -65,9 +65,10 @@ export default function Approval() {
     seen.current = verKey
   }, [verKey, refreshDetail, refreshInsight])
 
+  const [savedRule, setSavedRule] = useState<string | null>(null)
   const [outcome, setOutcome] = useState<Outcome>(null)
   const [denialDraft, setDenialDraft] = useState({ requestId: '', reason: '' })
-  const [pending, setPending] = useState<null | 'allow' | 'deny' | 'allow_task' | 'answer'>(null)
+  const [pending, setPending] = useState<null | 'allow' | 'deny' | 'allow_task' | 'remember' | 'answer'>(null)
   const [refreshing, setRefreshing] = useState(false)
   const alive = useRef(true)
   useEffect(() => () => { alive.current = false }, [])
@@ -78,16 +79,21 @@ export default function Approval() {
 
   const backToMatter = () => router.dismissTo(`/matter/${encodeURIComponent(id)}`)
 
-  async function send(requestId: string, key: string, kind: 'allow' | 'deny' | 'allow_task' | 'answer', run: () => Promise<void>) {
+  async function send(requestId: string, key: string, kind: 'allow' | 'deny' | 'allow_task' | 'remember' | 'answer', run: () => Promise<void | string>) {
     if (inflight.current || pending || refreshing || !detail.fresh || !online) return
     inflight.current = true
     setPending(kind)
     setOutcome(null)
-    const r: SubmitResult = await submit(key, run)
+    const receipt: { rule?: string } = {}
+    const r: SubmitResult = await submit(key, async () => {
+      const rule = await run()
+      if (typeof rule === 'string') receipt.rule = rule
+    })
     if (!alive.current) return
     if (r === 'ok') {
       void refreshDetail(); void refreshInsight()
-      backToMatter()
+      if (receipt.rule) setSavedRule(receipt.rule)
+      else backToMatter()
       return
     }
     if (r === 'busy') {
@@ -139,6 +145,11 @@ export default function Approval() {
       () => { void refreshPlaces() },
     )
   }, [backend, pollingRequest, refreshPlaces, store]))
+
+  if (savedRule) return shell(
+    <Notice text={t(lang, 'approval.remembered', { rule: savedRule })} testID="approval-rule-saved" />,
+    <Button kind="primary" label={t(lang, 'approval.backToMatter')} onPress={backToMatter} />,
+  )
 
   // 旧缓存算出来的「已处理」不作数:没拿到新详情前照样显示加载中。
   if (!d || !v || (!detail.fresh && v.kind === 'none')) {
@@ -240,8 +251,8 @@ export default function Approval() {
     )
   }
 
-  const decide = (decision: 'allow' | 'deny' | 'allow_task') =>
-    void send(v.requestId, `approve:${v.requestId}`, decision, () => backend.decide({ id, runId: v.runId, requestId: v.requestId, decision, ...(decision === 'deny' && v.canDenyWithReason && denialDraft.requestId === v.requestId && denialDraft.reason.trim() ? { reason: denialDraft.reason.trim() } : {}) }))
+  const decide = (decision: 'allow' | 'deny' | 'allow_task', remember?: true) =>
+    void send(v.requestId, `approve:${v.requestId}`, remember ? 'remember' : decision, () => backend.decide({ id, runId: v.runId, requestId: v.requestId, decision, ...(remember ? { remember } : {}), ...(decision === 'deny' && v.canDenyWithReason && denialDraft.requestId === v.requestId && denialDraft.reason.trim() ? { reason: denialDraft.reason.trim() } : {}) }))
 
   return shell(
     <PermissionCard key={v.requestId} v={v} taskId={id} matterTitle={matterTitle} ccOpinion={opinion.ccOpinion}
@@ -261,6 +272,10 @@ export default function Approval() {
         </View>
       </View>
       <Txt role="small" tone="inkSoft" style={{ textAlign: 'center' }}>{t(lang, 'approval.onlyThisRequest')}</Txt>
+      {v.rememberRule ? <>
+        <Txt role="small" tone="inkSoft">{v.rememberRule}</Txt>
+        <Button kind="secondary" testID="approval-remember" label={t(lang, 'approval.remember')} onPress={() => decide('allow', true)} disabled={locked} busy={pending === 'remember'} />
+      </> : null}
       {v.canAllowTask ? <><Button kind="secondary" testID="approval-allow-task" label={t(lang, 'approval.allowTask')} onPress={() => decide('allow_task')} disabled={locked} busy={pending === 'allow_task'} /><Txt role="small" tone="inkSoft" style={{textAlign:'center'}}>{t(lang,'approval.taskExpires')}</Txt></> : null}
     </View>,
   )

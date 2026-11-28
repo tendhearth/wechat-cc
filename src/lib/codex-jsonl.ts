@@ -23,6 +23,7 @@
 
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { parseJsonlRecord } from './jsonl-record'
 import { isValidIso } from './iso-time'
 
 export interface ClaudeShapeTurn {
@@ -72,9 +73,7 @@ export function readCodexJsonlAsClaudeTurns(path: string): ClaudeShapeTurn[] {
   try { raw = readFileSync(path, 'utf8') } catch { return out }
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue
-    let parsed: unknown
-    try { parsed = JSON.parse(line) } catch { continue }
-    const turn = codexLineToClaudeTurn(parsed)
+    const turn = codexLineToClaudeTurn(parseJsonlRecord(line))
     if (turn) out.push(turn)
   }
   return out

@@ -41,6 +41,17 @@ export function makePermissionDecisionsStore(db: Db) {
       const n = (k: string) => rows.find(r => r.by === k)?.n ?? 0
       return { rule: n('rule'), review: n('review') }
     },
+    ownerStreak(key: string): boolean {
+      const rows = db.query<{ verdict: string }, [string]>(`SELECT json_extract(payload_json,'$.ownerPermission.verdict') AS verdict
+        FROM matter_items WHERE kind IN ('permission','system') AND json_extract(payload_json,'$.ownerPermission.key')=?
+        ORDER BY cursor DESC LIMIT 3`).all(key)
+      return rows.length === 3 && rows.every(row => row.verdict === 'allow')
+    },
+    rulesAddedSince(at: number): string[] {
+      return db.query<{ line: string }, [number]>(`SELECT json_extract(payload_json,'$.ownerPermission.ruleAdded') AS line
+        FROM matter_items WHERE updated_at>=? AND kind IN ('permission','system')
+        AND json_type(payload_json,'$.ownerPermission.ruleAdded')='text' ORDER BY cursor DESC LIMIT 20`).all(at).map(row => row.line)
+    },
     prune(now: number): number {
       return db.query('DELETE FROM permission_decisions WHERE at<?').run(now - DECISION_RETAIN_MS).changes
     },

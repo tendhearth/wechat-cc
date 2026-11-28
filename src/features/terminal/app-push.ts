@@ -16,9 +16,11 @@
  * 失败只记日志、丢弃 —— 断线不重试。
  */
 import type { CliPushItem } from '../../app/cli-events'
-import type { CliPermissionRequest } from '../../app/cli-permission-relay'
+import type { CliPermissionCardContext, CliPermissionRequest } from '../../app/cli-permission-relay'
 import type { PendingPermissionMeta, PermissionDecision } from '../../daemon/pending-permissions'
-import type { PushPlaintextT } from '@wechat-cc/protocol'
+import { permissionCwd, type PushPlaintextT } from '@wechat-cc/protocol'
+import { redactSecrets } from '../../domain/cli-transcript'
+import { toolApprovalInput } from '../../domain/workbench/tool-input-preview'
 
 // 推送的形状直接按协议包(和 features/phone 的 PushPayload 是同一个定义):手机的 /m/api/cli/* 处理器要终端会话的类型,
 // 这里再 import 手机功能就成环(A5 · 手机)。
@@ -101,9 +103,9 @@ type Answer = 'allow' | 'deny' | 'timeout' | 'undelivered'
 export interface CliPermissionAskDeps {
   ownerChatId: () => string | null
   /** = ilink.askUser。 */
-  askUser: (chatId: string, prompt: string, hash: string, timeoutMs: number, opts?: { keepOnUndelivered?: boolean }) => Promise<Answer>
+  askUser: (chatId: string, prompt: string, hash: string, timeoutMs: number, opts?: { deadline?: () => number; keepOnUndelivered?: boolean; wechatPrompt?: string; incomplete?: boolean; rememberRule?: string; onDecision?: (decision: import('../../ports/workbench').PermissionDecision) => boolean | string }) => Promise<Answer>
   /** = ilink.registerPendingPermission(只登记、不发卡):没有微信主人 chat、但手机够得着时用。 */
-  registerPending: (hash: string, timeoutMs: number, meta: PendingPermissionMeta) => Promise<PermissionDecision>
+  registerPending: (hash: string, timeoutMs: number, meta: PendingPermissionMeta, opts?: { deadline?: () => number; onDecision?: (decision: import('../../ports/workbench').PermissionDecision) => boolean | string }) => Promise<PermissionDecision>
   /** = ilink.sweepPendingPermissions:到点让条目以 timeout 落定。 */
   sweepPending: () => void
   /** 手机 app 推送;没接(没开中继 v2)⇒ 返回 null。 */
@@ -116,7 +118,7 @@ export interface CliPermissionAskDeps {
  * 中继的 ask:先推手机(码已在中继登记,手机一点进来就能拍),再发微信卡。
  * 手机够得着(交给中继 ≥1 台,或有台正连着、页面上就看得见)⇒ 微信卡没送到也留着码等到点。
  */
-export function makeCliPermissionAsk(deps: CliPermissionAskDeps): (prompt: string, hash: string, timeoutMs: number, ctx: { req: CliPermissionRequest; projectName: string }) => Promise<Answer> {
+export function makeCliPermissionAsk(deps: CliPermissionAskDeps): (prompt: string, hash: string, timeoutMs: number, ctx: CliPermissionCardContext) => Promise<Answer> {
   return async (prompt, hash, timeoutMs, ctx) => {
     let phone = false
     const outlet = deps.push()
@@ -130,10 +132,28 @@ export function makeCliPermissionAsk(deps: CliPermissionAskDeps): (prompt: strin
       }
     }
     const owner = deps.ownerChatId()
-    if (owner) return deps.askUser(owner, prompt, hash, timeoutMs, { keepOnUndelivered: phone })
+    if (owner) {
+      const { req } = ctx
+      const cwd = permissionCwd(req.execution_cwd ?? req.cwd)
+      const reportedCwd = req.display?.body.kind === 'command' ? req.display.body.cwd : undefined
+      const { input, incomplete } = toolApprovalInput(req.display)
+      const details = input === undefined ? req.summary ?? '' : JSON.stringify(input, null, 2)
+      const safeDetails = redactSecrets(details)
+      const header = prompt.split('\n')[0]
+      const wechatPrompt = [header, req.tool_name, safeDetails, cwd && `目录：${JSON.stringify(cwd)}`, '过期终端自己会问。'].filter(Boolean).join('\n')
+      return deps.askUser(owner, prompt, hash, timeoutMs, {
+        keepOnUndelivered: phone,
+        ...(ctx.deadline ? { deadline: ctx.deadline } : {}),
+        wechatPrompt,
+        ...(ctx.rememberRule ? { rememberRule: ctx.rememberRule } : {}),
+        ...(ctx.onDecision ? { onDecision: ctx.onDecision } : {}),
+        incomplete: incomplete || !!req.display?.truncated || !cwd || (reportedCwd !== undefined && reportedCwd !== cwd) || safeDetails !== details,
+      })
+    }
     if (!phone) return 'undelivered'
     // 没有微信主人 chat(没绑微信):只登记,手机拍板。chatId 空串 ⇒ 任何微信 chat 都拍不了它。
-    const result = deps.registerPending(hash, timeoutMs, { chatId: '', prompt })
+    const meta = { chatId: '', prompt, ...(ctx.rememberRule ? { rememberRule: ctx.rememberRule } : {}) }
+    const result = ctx.deadline || ctx.onDecision ? deps.registerPending(hash, timeoutMs, meta, { deadline: ctx.deadline, onDecision: ctx.onDecision }) : deps.registerPending(hash, timeoutMs, meta)
     const t = setTimeout(() => { deps.sweepPending() }, timeoutMs + 1)
     ;(t as { unref?: () => void }).unref?.()
     return result

@@ -84,7 +84,7 @@ it.each(['allow','deny'] as const)('one executor uses the shared approval and or
   const h=await manager.acquire({alias:'chat',path:chat,providerId:'openai',chatId:'owner',tierProfile:TIER_PROFILES.admin,permissionMode:'strict'})
   await collectTurn(h.dispatch('让 Claude 整理插图',{source:'inbound'} as never))
   expect(cards).toHaveLength(answer==='allow'?2:1)
-  expect(cards[0]).toContain('第 1 棒 · claude：整理插图文件')
+  expect(cards[0]).toContain('第 1 棒 · claude：\n│ 整理插图文件')
   expect(cards[0]).not.toContain('第 2 棒')
   expect(cards[0]).toContain('relay-lab')
   expect(cards[0]).toContain(project)

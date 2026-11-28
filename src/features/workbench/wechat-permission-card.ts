@@ -10,8 +10,8 @@ import { wechatPermissionHeader } from '../../domain/workbench/wechat-permission
 import { wechatPermissionSource, type PendingWorkbenchPermission } from '../../ports/workbench'
 import { WECHAT_PERMISSION_INCOMPLETE, type WechatPermissionCard } from '../../ports/wechat'
 
-export function workbenchPermissionReplyLine(permission: PendingWorkbenchPermission, code: string | null): string {
-  return code ? `回「y ${code}」允许这一步、「n ${code}」拒绝。${permission.canDenyWithReason ? `拒绝理由选填：「n ${code} 理由」。` : ''}${permission.canAllowTask ? `回「yt ${code}」本任务同命令都允许，任务结束失效。` : ''}` : ''
+function workbenchPermissionReplyLine(permission: PendingWorkbenchPermission, code: string | null): string {
+  return code ? `看完回「y ${code}」就批准这一步，回「n ${code}」拒绝。${permission.canDenyWithReason ? `拒绝理由选填：「n ${code} 理由」。` : ''}${permission.canAllowTask ? `回「yt ${code}」本任务同命令都允许，任务结束失效。` : ''}` : ''
 }
 
 const LINE_LIMIT = 6
