@@ -56,7 +56,10 @@ export function parseInstalledVersion(version: string): InstalledVersion {
 }
 
 function samePath(a: string, b: string): boolean {
-  try { return realpathSync(a) === realpathSync(b) } catch { return false }
+  // .native:Windows 上 git 给的是长路径(runneradmin),临时目录是 8.3 短名(RUNNER~1),JS 版 realpath 不展开短名;
+  // Windows 路径不分大小写(2026-11-28 合并队列里 Windows 上抓到)。
+  const norm = (p: string) => { const r = realpathSync.native(p); return process.platform === 'win32' ? r.toLowerCase() : r }
+  try { return norm(a) === norm(b) } catch { return false }
 }
 
 export function matchesLaunchAgent(
