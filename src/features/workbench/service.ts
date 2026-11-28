@@ -293,6 +293,7 @@ export function makeWorkbenchService(opts: Options) {
 
   const service={
     ...ledgerDomain,
+    retryPendingChoices:relayDomain.retryPendingChoices,
     waitingOpinion: (id: string) => opts.askOpinion?.get(id),
     rosterRelay:relayDomain.rosterRelay,
     rosterRead:viewDomain.rosterRead,

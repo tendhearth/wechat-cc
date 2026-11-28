@@ -1,6 +1,7 @@
 import {afterEach, beforeEach, describe, expect, it} from 'vitest'
 import {openDb, type Db} from '../../lib/db'
 import { makeMatterStore } from '../../adapters/store/matters-store'
+import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import type { MatterStore } from '../../ports/matters'
 import {makeReportOutboxStore, type ReportOutboxStore} from './outbox'
 import {runReportSweep, sendReportVia, HELD_OVERRIDE_MS} from './sweeper'
@@ -50,6 +51,53 @@ describe('runReportSweep', () => {
     matters.bind(TASK, 'wechat', 'not-the-chat') // 任务自己的绑定不该被用来找 chat——投递器要看 origin 的绑定
   })
   afterEach(() => db.close())
+
+  async function queueComparison(){
+    matters.bind(CHAT, 'wechat', 'user-1')
+    const store=makeWorkbenchStore(db)
+    const {id}=store.create({title:'并行交办',path:process.cwd(),providerId:'codex',ownerChatId:'user-1',registerProject:false})
+    store.plans.approve(id,[{executor:'codex',brief:'改首页',parallel:['codex','claude']}],'run')
+    store.plans.saveComparison(id,1,'并行对照')
+    const report={matterId:id,originMatterId:CHAT,originMessageId:null,text:'并行对照'}
+    const row=await outbox.insert(report,1001,null,{position:1,revision:1})
+    return {store,id,row,report}
+  }
+
+  it('rechecks a comparison revision after an earlier send from the same sweep was in flight', async () => {
+    const {store,id,row,report}=await queueComparison()
+    await outbox.insert({matterId:TASK,originMatterId:CHAT,originMessageId:null,text:'先发的回报'},1000)
+    const entered=Promise.withResolvers<void>(),release=Promise.withResolvers<void>()
+    const sent:string[]=[]
+    const deps={store:outbox,matters,nowMs:1001,log:()=>{},send:async(_chat:string,text:string)=>{
+      sent.push(text)
+      if(text==='先发的回报'){entered.resolve();await release.promise}
+      return {ok:true}
+    }}
+    const sweeping=runReportSweep(deps)
+    await entered.promise
+    store.plans.reopenCandidate(id,'run')
+    store.plans.saveComparison(id,1,'新版对照')
+    release.resolve()
+    expect(await sweeping).toMatchObject({delivered:1,dropped:1})
+    expect(sent).toEqual(['先发的回报'])
+    expect(db.query('SELECT status FROM matter_report_outbox WHERE id=?').get(row)).toEqual({status:'dropped'})
+    await outbox.insert({...report,text:'新版对照'},1001,null,{position:1,revision:2})
+    expect(await runReportSweep(deps)).toMatchObject({delivered:1})
+    expect(sent).toEqual(['先发的回报','新版对照'])
+  })
+
+  it('retries the same comparison row when the channel succeeded before markSent could commit',async()=>{
+    const {row,report}=await queueComparison()
+    const sent:string[]=[]
+    const deps={matters,nowMs:1001,log:()=>{},send:async(_chat:string,text:string)=>{sent.push(text);return {ok:true}}}
+    const interrupted={...outbox,async markSent(){throw Error('crash before markSent')}}
+    await expect(runReportSweep({...deps,store:interrupted})).rejects.toThrow('crash before markSent')
+    const restarted=makeReportOutboxStore(db)
+    expect(await restarted.insert(report,1001,null,{position:1,revision:1})).toBe(row)
+    expect(await runReportSweep({...deps,store:restarted})).toMatchObject({delivered:1})
+    expect(sent).toEqual(['并行对照','并行对照'])
+    expect(await restarted.listDue(1001)).toEqual([])
+  })
 
   it('**门说推后(免打扰 / 两条路都送不到)⇒ 留在 outbox,不算一次尝试、不退避、不写 first_fail_at;恢复后只送达一次**(SpeechPolicy 第 2 步,整合者的条件)', async () => {
     matters.bind(CHAT, 'wechat', 'user-1')

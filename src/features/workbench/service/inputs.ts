@@ -191,6 +191,8 @@ export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
         // 靠它才不会因为快照从未被看见处于「忙碌」而永久锁死。
         running.turnSeq++
         running.parallelInputFailed=false
+        // A native acknowledgement can append its user row after the reply.
+        if(parallelRoot)running.parallelInputStartSeq=store.steps(id).at(-1)?.seq??0
         const root=store.plans.root(id),plan=store.plans.get(root),baton=running.ledgerRunId??running.identity
         const stoppedLeg=plan?.state==='approved'?plan.legs.find(l=>l.runId===baton&&l.state==='stopped'):undefined
         if(stoppedLeg){
@@ -203,9 +205,15 @@ export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
         // Replay acknowledgement may wait behind an autonomous native turn.
         // The HTTP receipt is already durable; never wait here or auto-resend.
         void runtime.submit(saved.id,text,material).then(
-          accepted=>settleRuntimeInput(running,saved,undefined,submittedTurn,accepted,origin==='owner'),
+          accepted=>{
+            const delivered=settleRuntimeInput(running,saved,undefined,submittedTurn,accepted,origin==='owner')
+            if(!delivered||!parallelRoot||state.runsByTask.get(id)!==running)return
+            const member=store.plans.candidateForTask(id),plan=store.plans.get(parallelRoot)
+            if(member&&!member.chosen&&member.runId===running.ledgerRunId&&plan?.state==='approved'
+              &&plan.legs.some(leg=>leg.position===member.position&&leg.state==='running'))settleAfterDecision(running)
+          },
           deliveryFailed,
-        )
+        ).catch(error=>ctx.log?.('WORKBENCH',`input follow-up failed: ${String(error)}`))
       }catch(error){deliveryFailed(error)}
       return store.liveInputs.get(saved.id)!
     }

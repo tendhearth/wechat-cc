@@ -108,7 +108,7 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
     ctx.ensureAccepting()
     if(!ctx.deps.matters)throw Error('entry_not_wired')
     const text=composeEntryPrompt(input)
-    let start: WorktreePlan['start']
+    let start=acceptance?.parallelStart
     try{
       if(record&&record.createdAt<Date.now()-7*86400_000)throw Error('entry_expired')
       const prepared=store.attachments.prepareAcceptance(input.attachmentIds??[],undefined,input.draftId,ctx.stateDir,context)
@@ -130,7 +130,7 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
       if(isolated&&!repoRoot)throw Error('worktree_not_git')
       // 指定了起点分支 ⇒ 预约前就核对它在不在,不留半截预约(10-08)
       const base=input.target.kind==='project'?input.target.base:undefined
-      if(isolated)start=acceptance?.parallelStart??await prepareWorktreeStart(repoRoot!,base,{signal:ctx.state.preparationAbort.signal})
+      if(isolated)start??=await prepareWorktreeStart(repoRoot!,base,{signal:ctx.state.preparationAbort.signal})
       ctx.ensureAccepting()
       const workspaceId=input.target.kind==='managed'||isolated?randomUUID():null
       record=store.entryRequests.reserve({ownerKey:context.ownerKey,requestId:input.requestId,canonicalRequestHash:hash,target:input.target,

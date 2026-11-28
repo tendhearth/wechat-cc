@@ -12,7 +12,7 @@ import {makePlacesStore} from '../../adapters/store/places-store'
 import {createProviderRegistry} from '../../app/provider-registry'
 import {MANAGED_NATIVE_CAPABILITIES,MANAGED_API_CAPABILITIES,UNATTENDED_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import type {UsageSnapshot} from '../../domain/subscription-usage'
-import type {AgentEvent,AgentRuntimeSnapshot,SpawnContext} from '../../ports/agent-provider'
+import type {AgentEvent,AgentInputAcceptance,AgentRuntimeSnapshot,SpawnContext} from '../../ports/agent-provider'
 import {AsyncQueue} from '../../lib/async-queue'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {ledgerRoutes} from './ledger-routes'
@@ -33,12 +33,13 @@ function setup(retainedFirst:boolean|'all'=false,signals=true,extra:Partial<Para
   const db=openTestDb(),store=makeWorkbenchStore(db),matters=makeMatterStore(db),registry=createProviderRegistry()
   const calls:Array<{executor:string;context:SpawnContext;text:string;queue:AsyncQueue<AgentEvent>;idle?:(mode?:AgentRuntimeSnapshot['input'])=>void}>=[],notices:string[]=[],ordinaryReports:string[]=[],order:string[]=[]
   let nextBlock:null|'quota'|'refused'|'ack'=null
+  let nextInputAck:Promise<AgentInputAcceptance>|undefined
   for(const executor of ['codex','claude','openai'])registry.register(executor,{async spawn(_p,context){
     const queue=new AsyncQueue<AgentEvent>()
     order.push(`spawn:${executor}`)
     if(retainedFirst&&executor==='codex'&&(retainedFirst==='all'||!calls.length)){
       let snapshot:AgentRuntimeSnapshot={retained:true,foreground:'running',backgroundCount:0,input:'send'}
-      return {workbenchRuntime:{events:queue.iterable(),snapshot:()=>snapshot,start(text){calls.push({executor,context,text,queue,idle:(input=snapshot.input)=>{snapshot={...snapshot,foreground:'idle',input}}})},async submit(_id,text){snapshot={...snapshot,foreground:'running'};calls.push({executor,context,text,queue,idle:(input=snapshot.input)=>{snapshot={...snapshot,foreground:'idle',input}}})}},async *dispatch(){},async close(){order.push(`close:${executor}`);queue.end()}}
+      return {workbenchRuntime:{events:queue.iterable(),snapshot:()=>snapshot,start(text){calls.push({executor,context,text,queue,idle:(input=snapshot.input)=>{snapshot={...snapshot,foreground:'idle',input}}})},async submit(_id,text){snapshot={...snapshot,foreground:'running'};calls.push({executor,context,text,queue,idle:(input=snapshot.input)=>{snapshot={...snapshot,foreground:'idle',input}}});const ack=nextInputAck;nextInputAck=undefined;return ack}},async *dispatch(){},async close(){order.push(`close:${executor}`);queue.end()}}
     }
     return {dispatch(text){calls.push({executor,context,text,queue});return queue.iterable()},async close(){order.push(`close:${executor}`);queue.end()}}
   }},{displayName:executor,canResume:()=>executor!=='openai',workbench:executor==='openai'?MANAGED_API_CAPABILITIES:MANAGED_NATIVE_CAPABILITIES})
@@ -51,7 +52,7 @@ function setup(retainedFirst:boolean|'all'=false,signals=true,extra:Partial<Para
   const request=()=>({requestId:randomUUID(),target:{kind:'managed' as const},title:'三棒接力',legs:[{executor:'codex',brief:'出三张图'},{executor:'claude',brief:'接入插图'},{executor:'openai',brief:'跑测试'}]})
   const create=async()=>{const result=await service.matterPlan(request());await expect.poll(()=>calls.length).toBe(1);return result.task.id}
   const finish=async(index:number,text='已完成。',error=false)=>{const call=calls[index]!;call.idle?.();call.queue.push({kind:'init',sessionId:call.context.resumeSessionId??`session-${index}`});call.queue.push({kind:'text',itemId:'private',text:'RAW_TRANSCRIPT_CANARY'});call.queue.push({kind:'text',itemId:'final',text});if(error)call.queue.push({kind:'error',message:'synthetic_failure'});else call.queue.push({kind:'result',sessionId:call.context.resumeSessionId??`session-${index}`,numTurns:1,durationMs:1});if(!call.idle)call.queue.end()}
-  return {root,project,db,store,matters,registry,calls,notices,ordinaryReports,order,request,create,finish,blockNext(mode:typeof nextBlock){nextBlock=mode;if(mode==='ack')registry.get('claude')!.opts.workbench=UNATTENDED_CAPABILITIES},get service(){return service},async restart(overrides:Partial<Parameters<typeof makeWorkbenchService>[0]>={}){await service.shutdown();service=makeWorkbenchService({...opts,...overrides})}}
+  return {root,project,db,store,matters,registry,calls,notices,ordinaryReports,order,request,create,finish,holdNextInputAck(ack:Promise<AgentInputAcceptance>){nextInputAck=ack},blockNext(mode:typeof nextBlock){nextBlock=mode;if(mode==='ack')registry.get('claude')!.opts.workbench=UNATTENDED_CAPABILITIES},get service(){return service},async restart(overrides:Partial<Parameters<typeof makeWorkbenchService>[0]>={}){await service.shutdown();service=makeWorkbenchService({...opts,...overrides})}}
 }
 
 it.each([false,true])('one leg creates an ordinary task without a relay plan or relay report (retained=%s)',async retained=>{
@@ -1060,8 +1061,8 @@ function parallelFixture(retained=false,extra:Partial<Parameters<typeof makeWork
   f.service.addProject({path:f.project,providerId:'codex'})
   return f
 }
-async function startParallel(f:ReturnType<typeof parallelFixture>,title:string,legs:typeof ParallelPlanLegs=ParallelPlanLegs){
-  const input={requestId:randomUUID(),project:f.service.projects()[0]!.id,title,legs}
+async function startParallel(f:ReturnType<typeof parallelFixture>,title:string,legs:typeof ParallelPlanLegs=ParallelPlanLegs,project=f.project){
+  const input={requestId:randomUUID(),project:f.service.projects().find(p=>p.path===project)!.id,title,legs}
   f.service.noteMatterApproval('mcp__wechat__matter_plan',input,parallelCaller)
   const {receipt}=await f.service.matterPlan(input,parallelContext),id=receipt.matterId
   await expect.poll(()=>f.store.plans.candidates(id,1).every(m=>m.taskId&&f.calls.some(c=>c.context.workbenchTaskId===m.taskId))).toBe(true)
@@ -1083,15 +1084,14 @@ async function finishParallel(f:ReturnType<typeof parallelFixture>,title:string,
 it('asks for a specific comparison and replays the original choice receipt after focus changes',async()=>{
   const f=parallelFixture()
   const a=await startParallel(f,'未出对照的甲')
-  const b=await finishParallel(f,'已出对照的乙')
-  const command='用 Codex 那版',unknown=wechatIdentity()
+  const command='用 Codex 那版',unknown=wechatIdentity(a.id)
   const clarification=await f.service.handleWechat('owner',command,unknown)
+  expect(clarification).toContain('哪份对照')
+  const b=await finishParallel(f,'已出对照的乙')
   // Inspect persisted state before checking wording: the wrong repository could
   // already have been adopted even when the returned message was misleading.
   expect(f.store.plans.candidates(b.id,1).some(m=>m.chosen)).toBe(false)
-  expect(clarification).toContain('哪份对照')
-  expect(await f.service.handleWechat('owner',command,wechatIdentity(a.id))).toContain('等并行组结束')
-  const delivery=wechatIdentity(b.id)
+  const delivery=wechatIdentity(a.id)
   const reply=await f.service.handleWechat('owner',command,delivery)
   expect(reply).toContain(b.left.id)
   expect(f.store.plans.candidates(b.id,1)[0]?.chosen).toBe(true)
@@ -1106,7 +1106,100 @@ it('asks for a specific comparison and replays the original choice receipt after
   expect(await f.service.handleWechat('owner',command,{...unknown,focusTaskId:c.id})).toBe(clarification)
   expect(f.store.plans.candidates(c.id,1).some(m=>m.chosen)).toBe(false)
   expect(existsSync(join(f.project,'must-not-merge.txt'))).toBe(false)
-  expect(f.db.query<{task_id:string|null},[]>('SELECT task_id FROM matter_plan_choice_receipts ORDER BY rowid').all().map(row=>row.task_id)).toEqual([null,a.left.id,b.left.id])
+  expect(f.db.query<{task_id:string|null},[]>('SELECT task_id FROM matter_plan_choice_receipts ORDER BY rowid').all().map(row=>row.task_id)).toEqual([null,b.left.id])
+})
+
+it.each([false,true])('replays a Git merge with a rolled-back choice after focus changes (second comparison=%s)',async secondComparison=>{
+  const f=parallelFixture()
+  const a=await startParallel(f,'原来的项目')
+  writeFileSync(join(a.left.path,'original.txt'),'original choice\n')
+  parallelGit(a.left.path,'add','.');parallelGit(a.left.path,'commit','-qm','original choice')
+  const sha=parallelGit(a.left.path,'rev-parse','HEAD')
+  await f.finish(callFor(f,a.left.id),'状态：做完')
+  await f.finish(callFor(f,a.right.id),'状态：做完')
+  await expect.poll(()=>f.store.plans.comparison(a.id,1)?.text).toContain('original.txt')
+
+  const command='用 Codex 那版',delivery=wechatIdentity(a.id)
+  f.db.exec("CREATE TRIGGER crash_choice BEFORE INSERT ON matter_plan_choice_receipts BEGIN SELECT RAISE(ABORT,'crash after Git'); END")
+  await expect(f.service.handleWechat('owner',command,delivery)).rejects.toThrow('crash after Git')
+  expect(parallelGit(f.project,'rev-parse','HEAD')).toBe(sha)
+  expect(f.store.plans.candidates(a.id,1)[0]?.chosen).toBe(false)
+  expect(f.db.query('SELECT * FROM matter_plan_choice_receipts').all()).toEqual([])
+  f.db.exec('DROP TRIGGER crash_choice')
+  await f.restart()
+
+  const other=join(f.root,'other');mkdirSync(other)
+  parallelGit(other,'init','-q','-b','main')
+  parallelGit(other,'commit','-qm','other baseline','--allow-empty')
+  const otherHead=parallelGit(other,'rev-parse','HEAD')
+  f.service.addProject({path:other,providerId:'codex'})
+  const b=await startParallel(f,'新焦点的项目',ParallelPlanLegs,other)
+  writeFileSync(join(b.left.path,'wrong.txt'),'wrong choice\n')
+  parallelGit(b.left.path,'add','.');parallelGit(b.left.path,'commit','-qm','wrong choice')
+  if(secondComparison){
+    await f.finish(callFor(f,b.left.id),'状态：做完')
+    await f.finish(callFor(f,b.right.id),'状态：做完')
+    await expect.poll(()=>f.store.plans.comparison(b.id,1)?.text).toContain('wrong.txt')
+  }
+  const reply=await f.service.handleWechat('owner',command,{...delivery,focusTaskId:b.id})
+  expect(parallelGit(other,'rev-parse','HEAD')).toBe(otherHead)
+  expect(f.store.plans.candidates(b.id,1)[0]?.chosen).toBe(false)
+  expect(f.store.plans.candidates(a.id,1)[0]?.chosen).toBe(!secondComparison)
+  expect(reply).toContain(secondComparison?'请带上那一版的任务编号':'项目已包含这版的提交')
+  expect(parallelGit(f.project,'rev-parse','HEAD')).toBe(sha)
+})
+
+it.each([0,1])('requires manual dispatch after the parallel group opens and %i members accept',async acceptedCount=>{
+  const notices:string[]=[],logs:string[]=[]
+  const f=parallelFixture(false,{log:(_tag,line)=>logs.push(line),reports:{enqueue(){},enqueueRelay(_id,text){
+    if(acceptedCount===0&&text.includes('第 2 棒开始并行'))throw Error('crash after opening')
+    notices.push(text)
+  }}})
+  const a=await startParallel(f,'并行下一棒开组中断',[...ParallelPlanLegs,...ParallelPlanLegs])
+  writeFileSync(join(a.right.path,'selected.txt'),'chosen starting point\n')
+  parallelGit(a.right.path,'add','.');parallelGit(a.right.path,'commit','-qm','chosen starting point')
+  const selectedSha=parallelGit(a.right.path,'rev-parse','HEAD')
+  await f.finish(callFor(f,a.left.id),'状态：做完')
+  await f.finish(callFor(f,a.right.id),'状态：做完')
+  await expect.poll(()=>f.store.plans.comparison(a.id,1)?.text).toContain('selected.txt')
+
+  // Exit just after openGroup, or after one entry acceptance transaction and
+  // before recording anything about the other member.
+  if(acceptedCount===1)f.db.exec(`CREATE TRIGGER crash_parallel_accept BEFORE UPDATE OF task_id ON matter_plan_candidates
+    WHEN NEW.position=2 AND NEW.ordinal=2 BEGIN SELECT RAISE(ABORT,'crash before member acceptance'); END;
+    CREATE TRIGGER crash_parallel_attention BEFORE UPDATE OF stop_reason ON matter_plan_legs
+    WHEN NEW.position=2 AND NEW.stop_reason='leg_interrupted' BEGIN SELECT RAISE(ABORT,'crash before attention'); END`)
+  await f.service.worktreeAction(a.right.id,'merge')
+  await expect.poll(()=>f.store.plans.get(a.id)?.legs[1]?.state).toBe('running')
+  await expect.poll(()=>f.store.plans.candidates(a.id,2).filter(m=>m.taskId).length).toBe(acceptedCount)
+  expect(f.store.plans.dispatchIntents('owner')).toEqual([{matterId:a.id}])
+  if(acceptedCount===1){
+    await expect.poll(()=>logs.join('\n')).toContain('crash before attention')
+    f.db.exec('DROP TRIGGER crash_parallel_accept; DROP TRIGGER crash_parallel_attention')
+  }
+  const accepted=f.store.plans.candidates(a.id,2).filter(m=>m.taskId)
+  expect(accepted).toHaveLength(acceptedCount)
+  await f.restart()
+  const missingNames=acceptedCount===0?'Codex、Claude':'Claude'
+  const command=`任务 ${a.id} 继续`
+  const message=`第 2 棒需要你看一眼。${missingNames} 还没开工。发送「${command}」让这几位开工。`
+  await expect.poll(()=>notices).toContain(message)
+  expect(f.store.plans.get(a.id)?.legs[1]).toMatchObject({state:'running',stopReason:'leg_interrupted'})
+  expect(f.store.plans.candidates(a.id,2).filter(m=>m.taskId).map(m=>m.taskId)).toEqual(accepted.map(m=>m.taskId))
+  expect(f.store.plans.comparison(a.id,2)).toBeNull()
+  expect(f.store.plans.dispatchIntents('owner')).toEqual([{matterId:a.id}])
+
+  // A manual retry uses the same start even if the selected branch has since moved.
+  parallelGit(a.right.path,'commit','-qm','later change','--allow-empty')
+  const delivery=wechatIdentity()
+  expect(await f.service.handleWechat('owner',command,delivery)).toContain('继续')
+  await expect.poll(()=>f.store.plans.dispatchIntents('owner')).toEqual([])
+  const resumed=f.store.plans.candidates(a.id,2)
+  expect(resumed.map(m=>f.store.worktrees.get(m.taskId!)?.start?.sha)).toEqual([selectedSha,selectedSha])
+  expect(resumed.slice(0,acceptedCount).map(m=>m.taskId)).toEqual(accepted.map(m=>m.taskId))
+  await f.service.handleWechat('owner',command,delivery)
+  expect(f.store.plans.candidates(a.id,2).map(m=>m.taskId)).toEqual(resumed.map(m=>m.taskId))
+  expect(f.store.plans.get(a.id)?.legs[1]?.stopReason).toBeNull()
 })
 
 it('projects ledger rows by baton for both the model opening and matter_notes',async()=>{
@@ -1192,6 +1285,33 @@ it('reopens a quiet comparison when input queues and rejects a commit outside th
   await expect.poll(()=>f.store.plans.comparison(a.id,1)?.text).toContain('new-candidate.txt')
   expect(await f.service.handleWechat('owner',`用 Claude 那版 任务 ${a.right.id} 对照 2`,wechatIdentity())).toContain('请再选一次')
   await expect(f.service.worktreeAction(a.right.id,'merge')).resolves.toMatchObject({merged:true})
+})
+
+it('settles a parallel version when a native confirmation arrives after the result and quiet checks',async()=>{
+  const f=parallelFixture(true)
+  const a=await finishParallel(f,'迟到的补充确认')
+  const left=f.calls[callFor(f,a.left.id)]!
+  left.idle!('steer')
+  const ack=Promise.withResolvers<AgentInputAcceptance>()
+  f.holdNextInputAck(ack.promise)
+  const runId=f.service.detail(a.left.id).runId!,requestId=randomUUID()
+  const finished=vi.spyOn(f.store.ledger,'finish')
+  expect(await f.service.submitInput(a.left.id,{runId,requestId,text:'再核一遍'})).toMatchObject({status:'sending'})
+  f.calls.at(-1)!.idle!()
+  left.queue.push({kind:'text',itemId:'late-ack-result',text:'状态：做完\n验证情况：第二轮通过'})
+  left.queue.push({kind:'result',sessionId:f.store.get(a.left.id).sessionId!,numTurns:2,durationMs:1})
+  await expect.poll(()=>finished.mock.calls.some(args=>args[3].includes('第二轮通过'))).toBe(true)
+  expect(f.store.liveInputs.get(requestId)?.status).toBe('sending')
+  expect(f.store.plans.candidates(a.id,1)[0]?.status).toBe('running')
+  expect(f.store.plans.comparison(a.id,1)?.text).toBeNull()
+
+  ack.resolve({mode:'steer'})
+  await expect.poll(()=>f.store.plans.comparison(a.id,1)?.text).toContain('第二轮通过')
+  expect(f.store.plans.candidates(a.id,1)[0]?.status).toBe('completed')
+  expect(f.store.liveInputs.get(requestId)?.status).toBe('delivered')
+  const deliveryOrder=f.store.events(a.left.id).filter(e=>
+    (e.kind==='text'&&e.text?.includes('第二轮通过'))||(e.kind==='user'&&e.text==='再核一遍'))
+  expect(deliveryOrder.map(e=>e.kind)).toEqual(['text','user'])
 })
 
 it('blocks a quiet member with an already pending supplement before any comparison is published',async()=>{
@@ -1290,11 +1410,24 @@ it('recovers a selected baton pending admission, then continues the failed next 
   await expect.poll(()=>f.store.plans.get(a.id)?.legs[1]?.stopReason).toBe('matter_blocked')
   expect(f.store.plans.dispatchIntents('owner')).toEqual([{matterId:a.id}])
   expect(f.calls).toHaveLength(2)
-  await f.restart()
-  expect(f.calls).toHaveLength(2)
-  occupied=false
-  await f.restart()
-  await expect.poll(()=>f.calls.length).toBe(3)
+  const reads=vi.spyOn(f.store.plans,'dispatchIntents')
+  vi.useFakeTimers({toFake:['setInterval','clearInterval']})
+  let timer:ReturnType<typeof setInterval>|undefined
+  try{
+    await f.restart()
+    timer=setInterval(f.service.retryPendingChoices,60_000)
+    expect(f.calls).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(f.calls).toHaveLength(2)
+    occupied=false
+    await vi.advanceTimersByTimeAsync(59_999)
+    expect(f.calls).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(1)
+    await expect.poll(()=>f.calls.length).toBe(3)
+    reads.mockClear()
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(reads).not.toHaveBeenCalled()
+  }finally{clearInterval(timer);vi.useRealTimers();reads.mockRestore()}
   expect(f.calls[2]?.context.workbenchTaskId).toBe(a.right.id)
   expect(f.store.plans.dispatchIntents('owner')).toEqual([])
   expect(await f.service.handleWechat('owner',choice,delivery)).toBe(reply)

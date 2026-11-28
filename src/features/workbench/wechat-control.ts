@@ -282,7 +282,7 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
         if(prior!==undefined)return prior
         if(choice){
           if(!opts.actions.parallelChoiceTask)return null
-          taskId=opts.actions.parallelChoiceTask(chatId,choice.name,choice.matterId??identity?.focusTaskId,choice.revision)
+          taskId=opts.actions.parallelChoiceTask(chatId,choice.name,choice.matterId,choice.revision)
         }
         if(choice||taskId&&opts.store.plans.candidateForTask(taskId)){
           const target=taskId!
@@ -524,7 +524,8 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
       if(relayContinue){
         const current=plan.legs.find(leg=>leg.state==='running'||leg.state==='stopped')
         const group=current?opts.store.plans.candidates(root,current.position):[]
-        if(group.length&&!group.some(member=>member.taskId===id))return '这一棒在并行处理。请带上要继续的版本的任务编号。'
+        if(group.length&&current?.stopReason==='leg_interrupted'&&id===root)target=opts.store.plans.activeTask(root,current.position)
+        else if(group.length&&!group.some(member=>member.taskId===id))return '这一棒在并行处理。请带上要继续的版本的任务编号。'
         if(!group.length)target=opts.store.plans.activeTask(root,current?.position??plan.legs.find(leg=>leg.state==='pending')?.position)
       }
       const detail=opts.actions.detail(target)

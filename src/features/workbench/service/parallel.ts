@@ -71,7 +71,7 @@ export function makeParallelDomain(ctx:ServiceCtx,entry:EntryDomain){
     if(ownerInputQueued&&status==='completed'&&!running.cancelled)return true
     if(running.cancelled&&(!running.closedWhileReplied||running.ownerStopped))status='cancelled'
     const steps=store.steps(running.taskId).filter(step=>stepPayload(step).runId===running.identity)
-    const lastInput=steps.findLast(step=>timelineKind(step)==='user')?.seq??0
+    const lastInput=running.parallelInputStartSeq??steps.findLast(step=>timelineKind(step)==='user')?.seq??0
     // An idle snapshot can close the stored turn before the buffered result.
     const reply=steps.findLast(step=>step.seq>lastInput&&timelineKind(step)==='text')
     const text=reply?stepPayload(reply).text:''
@@ -102,7 +102,7 @@ export function makeParallelDomain(ctx:ServiceCtx,entry:EntryDomain){
         ctx.hub.bumped(id)
       }catch(error){
         ctx.log?.('MATTER_PARALLEL',`${id}/${position}/${member.ordinal}: ${error instanceof Error?error.message:'launch failed'}`)
-        settle(member,state.stopping?'interrupted':'failed',null)
+        if(!store.plans.hasDispatchIntent(id,position-1))settle(member,state.stopping?'interrupted':'failed',null)
       }
     })).then(()=>{}).finally(()=>launching.delete(key))
     launching.set(key,work)
@@ -116,7 +116,7 @@ export function makeParallelDomain(ctx:ServiceCtx,entry:EntryDomain){
     const sha=git(tree.root,['rev-parse','--verify','HEAD^{commit}'])
     return {target:{kind:'project',projectId:prior.projectId,isolation:'worktree'},start:{base:tree.branch,sha,notices:[]}}
   }
-  async function choose(taskId:string,merge:(sha?:string)=>WorktreeActionResult,resume:(id:string)=>void,record?:(result:WorktreeActionResult)=>void){
+  async function choose(taskId:string,merge:(sha?:string)=>WorktreeActionResult,resume:(id:string,position:number)=>void,record?:(result:WorktreeActionResult)=>void){
     const member=store.plans.candidateForTask(taskId)
     if(!member||member.chosen){
       const merged=merge()
@@ -155,11 +155,18 @@ export function makeParallelDomain(ctx:ServiceCtx,entry:EntryDomain){
       return result
     })
     ctx.hub.bumped(id)
-    resume(id)
+    resume(id,position)
     return merged
   }
   function choiceTask(owner:string,name:string,target?:string,revision?:number){
-    if(!target)throw Error('matter_parallel_choice_ambiguous')
+    const matchesName=(member:PlanCandidate)=>member.executor.toLowerCase()===name.toLowerCase()
+      ||ctx.deps.registry.namesOf(member.executor).name.toLowerCase()===name.toLowerCase()
+    if(!target){
+      const matches=store.plans.pendingChoices(owner,true).flatMap(({matterId,position})=>
+        store.plans.candidates(matterId,position).filter(member=>member.taskId&&matchesName(member)))
+      if(matches.length!==1)throw Error('matter_parallel_choice_ambiguous')
+      return matches[0]!.taskId!
+    }
     const candidate=store.plans.candidateForTask(target)
     const id=candidate?.matterId??target
     // A root task without its own membership is usable only when its comparison
@@ -171,8 +178,7 @@ export function makeParallelDomain(ctx:ServiceCtx,entry:EntryDomain){
     if(!plan||store.get(id).ownerChatId!==owner)throw Error('matter_parallel_choice_ambiguous')
     if(plan.state!=='approved'||plan.legs.find(leg=>leg.position===position)?.state!=='running')throw Error('matter_parallel_not_ready')
     if(revision!==undefined&&store.plans.comparison(id,position)?.revision!==revision)throw Error('matter_parallel_snapshot_changed')
-    const matches=store.plans.candidates(id,position).filter(member=>
-      member.executor.toLowerCase()===name.toLowerCase()||ctx.deps.registry.namesOf(member.executor).name.toLowerCase()===name.toLowerCase())
+    const matches=store.plans.candidates(id,position).filter(matchesName)
     if(matches.length!==1)throw Error('matter_parallel_choice_ambiguous')
     if(!matches[0]?.taskId)throw Error('matter_parallel_not_ready')
     return matches[0].taskId

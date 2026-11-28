@@ -25,6 +25,7 @@ export interface OutboxRecord {
   createdAt: number
   /** 这一条报的是哪一个事件(domain/speech/event-ref turnRef;v103、S3a):问门带上它,账和 App 推送并成一行。旧行 / 读不到 ⇒ null。 */
   ref: string | null
+  comparison: boolean
   /**
    * When this row FIRST hit a non-(-2) delivery failure (v66; evaluation
    * round 3). Null = it has never really failed yet (either brand new, or
@@ -75,6 +76,8 @@ export interface ReportOutboxStore {
   insert(report: PendingReport, now: number, ref?: string | null, comparison?: ComparisonReportKey): Promise<number>
   /** Pending rows with next_at <= now, oldest-due first. */
   listDue(now: number): Promise<OutboxRecord[]>
+  /** Synchronous recheck at the call to the send channel. */
+  comparisonCurrent(id: number): boolean
   /** Mark delivered. */
   markSent(id: number): Promise<void>
   /** Mark a permanent failure (e.g. origin chat no longer bound) — never retried. */
@@ -102,9 +105,13 @@ interface Row {
   created_at: number
   first_fail_at: number | null
   ref: string | null
+  comparison_position: number | null
 }
 
-const COLS = 'id, matter_id, origin_matter_id, origin_message_id, text, status, attempts, next_at, created_at, first_fail_at, ref'
+const COLS = 'id, matter_id, origin_matter_id, origin_message_id, text, status, attempts, next_at, created_at, first_fail_at, ref, comparison_position'
+const CURRENT_COMPARISON = `EXISTS(
+      SELECT 1 FROM matter_plan_comparisons c WHERE c.matter_id=matter_report_outbox.matter_id AND c.position=matter_report_outbox.comparison_position
+      AND c.revision=matter_report_outbox.comparison_revision AND c.text IS NOT NULL)`
 
 function rowToRecord(r: Row): OutboxRecord {
   return {
@@ -119,6 +126,7 @@ function rowToRecord(r: Row): OutboxRecord {
     createdAt: r.created_at,
     firstFailAt: r.first_fail_at,
     ref: r.ref,
+    comparison: r.comparison_position !== null,
   }
 }
 
@@ -149,9 +157,10 @@ export function makeReportOutboxStore(db: Db): ReportOutboxStore {
     "UPDATE matter_report_outbox SET status = 'dropped' WHERE matter_id = ? AND comparison_position IS NULL AND status = 'pending' AND id <> ?",
   )
   const stmtListDue = db.query<Row, [number]>(
-    `SELECT ${COLS} FROM matter_report_outbox WHERE status = 'pending' AND next_at <= ? AND (comparison_position IS NULL OR EXISTS(
-      SELECT 1 FROM matter_plan_comparisons c WHERE c.matter_id=matter_report_outbox.matter_id AND c.position=matter_report_outbox.comparison_position
-      AND c.revision=matter_report_outbox.comparison_revision AND c.text IS NOT NULL)) ORDER BY next_at ASC, id ASC`,
+    `SELECT ${COLS} FROM matter_report_outbox WHERE status = 'pending' AND next_at <= ? AND (comparison_position IS NULL OR ${CURRENT_COMPARISON}) ORDER BY next_at ASC, id ASC`,
+  )
+  const stmtComparisonCurrent = db.query<{id: number}, [number]>(
+    `SELECT id FROM matter_report_outbox WHERE id = ? AND status = 'pending' AND ${CURRENT_COMPARISON}`,
   )
   // Status-guarded like reminders' markSent: a row that raced to 'dropped' (or
   // was already sent) must not flip back to 'sent'.
@@ -192,6 +201,9 @@ export function makeReportOutboxStore(db: Db): ReportOutboxStore {
     },
     async listDue(now) {
       return stmtListDue.all(now).map(rowToRecord)
+    },
+    comparisonCurrent(id) {
+      return !!stmtComparisonCurrent.get(id)
     },
     async markSent(id) {
       stmtMarkSent.run(id)
