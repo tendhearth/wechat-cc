@@ -734,6 +734,25 @@ describe('merge', () => {
     expect(rec.git.some(a => a.join(' ').includes('HEAD:refs/heads/dev'))).toBe(false)
   })
 
+  it('经合并队列合的:树放到这个 PR 的合入提交上,不是 dev 顶端(队列同批可能多快进了别人的)', async () => {
+    const MERGE = 'm'.repeat(40)
+    const s = fakeState({ pr: { number: 77, url: 'u' } })
+    const { deps, rec } = makeFakeDeps({ git: gitReply({ 'rev-parse HEAD': MERGE }), forge: { land: async () => ({ exitCode: 0, message: '合完 1 层(经合并队列)', mergeSha: MERGE }) } })
+    expect(await steps.merge(s, deps)).toEqual({ ok: true, next: 'deploy' })
+    const lines = rec.git.map(a => a.join(' '))
+    expect(lines).toContain(`merge-base --is-ancestor ${MERGE} origin/dev`)
+    expect(lines).toContain(`checkout -q --detach ${MERGE}`)
+    expect(lines).not.toContain('checkout -q --detach origin/dev')
+    expect(s.merge.sha).toBe(MERGE)
+  })
+
+  it('合入提交不在 dev 上(不该发生)⇒ 退回 dev 顶端,记一笔', async () => {
+    const MERGE = 'm'.repeat(40)
+    const { deps, rec } = makeFakeDeps({ git: gitReply({ 'merge-base --is-ancestor': { code: 1 } }), forge: { land: async () => ({ exitCode: 0, message: 'x', mergeSha: MERGE }) } })
+    await steps.merge(fakeState({ pr: { number: 77, url: 'u' } }), deps)
+    expect(rec.git.map(a => a.join(' '))).toContain('checkout -q --detach origin/dev')
+  })
+
   it('老存盘没有 PR ⇒ 先补开一个再合', async () => {
     const s = fakeState()
     const { deps, rec } = makeFakeDeps()

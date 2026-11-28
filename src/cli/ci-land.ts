@@ -183,13 +183,24 @@ const QUEUE_POLL_MS = 60_000
 
 export interface QueueState { state: string; headRefOid: string; isInMergeQueue: boolean; autoMerge: boolean; mergeCommit?: string }
 
-/** 队列里的一个 PR 现在算什么:合了 / 还在等 / 被踢出来了(队列那一轮红,或者有人取消)/ head 被人动过。 */
-export function judgeQueue(q: QueueState, head: string, sinceEnqueueMs: number): 'merged' | 'waiting' | 'dequeued' | 'moved' {
+/**
+ * 队列里的一个 PR 现在算什么。先核 head:合进去的不是钉住的那一版(有人换了 head 又先合了)⇒ moved,不报成功。
+ * `sinceActiveMs` 从**最后一次**看见「在队列里 / 开着自动合并」算起(没看见过就从排队请求算):重组的空档里
+ * 偶尔一次两个标记都读不到,不当场判被踢。
+ */
+export function judgeQueue(q: QueueState, head: string, sinceActiveMs: number): 'merged' | 'waiting' | 'awaiting_checks' | 'dequeued' | 'moved' {
+  if (q.headRefOid !== head) return 'moved'
   if (q.state === 'MERGED') return 'merged'
   if (q.state !== 'OPEN') return 'dequeued'
-  if (q.headRefOid !== head) return 'moved'
-  if (q.isInMergeQueue || q.autoMerge) return 'waiting'
-  return sinceEnqueueMs < QUEUE_ENTER_GRACE_MS ? 'waiting' : 'dequeued'
+  if (q.isInMergeQueue) return 'waiting'
+  // 开着自动合并、还没进队列 = 在等 PR 自己的检查(叠起来的上层刚推上去)。
+  if (q.autoMerge) return 'awaiting_checks'
+  return sinceActiveMs < QUEUE_ENTER_GRACE_MS ? 'waiting' : 'dequeued'
+}
+
+/** target 的有效规则里有没有合并队列(`gh api repos/{o}/{r}/rules/branches/<b>` 的输出)。 */
+export function hasMergeQueueRule(rulesJson: string): boolean {
+  try { return (JSON.parse(rulesJson) as Array<{ type?: string }>).some(r => r.type === 'merge_queue') } catch { return false }
 }
 const NET_RETRIES = 3
 const NET_BACKOFF_MS = [5_000, 15_000, 45_000]
@@ -200,7 +211,7 @@ export function isNetworkError(stderr: string): boolean {
   return /SSL_ERROR|SSL_connect|Could not resolve|timed? ?out|Connection (reset|refused|closed)|unexpected disconnect|early EOF|HTTP (5\d\d)|\b50[234]\b|Bad Gateway|Service Unavailable|TLS handshake/i.test(stderr)
 }
 
-export interface CiLandResult { exitCode: number; merged: number[]; message: string }
+export interface CiLandResult { exitCode: number; merged: number[]; message: string; /** 队列模式:最后合进去的那一层在 target 上的合入提交。 */ mergeSha?: string }
 
 export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiLandResult> {
   const target = opts.target ?? 'dev'
@@ -315,13 +326,20 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
       if (tc.code !== 0) return fail(CI_LAND_EXIT.red, `#${layer.number} rebase 后 typecheck 红(没推);前面已合 ${merged.map(n => `#${n}`).join('、') || '无'}`)
     }
     const head = git('rev-parse', 'HEAD').stdout.trim()
+    // 队列模式:先改 base 再推 —— 推送触发的那一轮(synchronize)才是对着 dev 跑的;反过来,那一轮按旧 base 跑,
+    // 改 base 本身又不触发新一轮(pull_request 缺省不含 edited),上层就一直等不到对着 dev 的检查(#1119 评审)。
+    const baseFirst = !!opts.queue && onto === `origin/${target}` && layer.baseRefName !== target
+    if (baseFirst) {
+      const e = await net(() => gh('pr', 'edit', String(layer.number), '--base', target))
+      if (e.code !== 0) return fail(CI_LAND_EXIT.precondition, `#${layer.number} 改 base 失败:${lastLine(e)}(重跑 ci land ${opts.top} 接着来)`)
+    }
     if (head !== layer.oldHead) {
       // --no-verify:重放的这一层推上去之后,下面照样等它的 CI 全绿才合;本机 pre-push 钩子(scripts/verify-stamp.ts)认的是
       // 「这份内容本机跑过 verify」,rebase 出来的新树必然没跑过 ⇒ 不绕过就合不下去(2026-10-27 #739 就这么卡住)。
       const push = await net(() => git('push', '--no-verify', `--force-with-lease=${layer.headRefName}:${layer.oldHead}`, 'origin', `HEAD:refs/heads/${layer.headRefName}`))
       if (push.code !== 0) return fail(CI_LAND_EXIT.moved, `#${layer.number} 推不上去(分支被人动过?):${lastLine(push)}`)
     }
-    const edit = onto === `origin/${target}` ? await net(() => gh('pr', 'edit', String(layer.number), '--base', target)) : { code: 0, stdout: '', stderr: '' }
+    const edit = onto === `origin/${target}` && !baseFirst ? await net(() => gh('pr', 'edit', String(layer.number), '--base', target)) : { code: 0, stdout: '', stderr: '' }
     if (edit.code !== 0) return fail(CI_LAND_EXIT.precondition, `#${layer.number} 改 base 失败:${lastLine(edit)}(重跑 ci land ${opts.top} 接着来)`)
     return { head }
   }
@@ -342,6 +360,12 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
     deps.log(`接着来:整串已重新放到 ${target} 上(${stack.map(l => `#${l.number}@${l.oldHead.slice(0, 8)}`).join(' → ')}),等 #${stack[stack.length - 1]!.number} 的新 CI`)
   }
   const pinnedTop = stack[stack.length - 1]!.oldHead
+  if (opts.queue) {
+    // 队列关着时 gh pr merge --auto 会走普通自动合并、甚至在非交互下要你选合并方式 —— 不猜,先核规则。
+    const rules = await net(() => gh('api', `repos/{owner}/{repo}/rules/branches/${target}`))
+    if (rules.code !== 0) return done(CI_LAND_EXIT.precondition, `查 ${target} 的规则失败:${lastLine(rules)}`)
+    if (!hasMergeQueueRule(rules.stdout)) return done(CI_LAND_EXIT.precondition, `${target} 没开合并队列:用 --direct 照老办法合(那时 PR 要三平台:仓库变量 MERGE_QUEUE 也要关掉)`)
+  }
 
   /** 队列那条路:从下往上,每层 `--auto` 进队列、等它合;上层先放到 dev 上再进。 */
   const queueState = (n: number): QueueState | null => {
@@ -366,30 +390,49 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
         const ready = await net(() => gh('pr', 'ready', String(layer.number)))
         if (ready.code !== 0) return done(CI_LAND_EXIT.precondition, `#${layer.number} 标 ready 失败:${lastLine(ready)}(重跑 ci land ${opts.top} 接着来)`)
       }
-      const enq = await net(() => gh('pr', 'merge', String(layer.number), '--auto', '--match-head-commit', head))
-      if (enq.code !== 0 && queueState(layer.number)?.state !== 'MERGED') {
-        return done(CI_LAND_EXIT.moved, `#${layer.number} 进不了合并队列:${lastLine(enq)}(重跑 ci land ${opts.top} 接着来)`)
-      }
-      deps.log(`#${layer.number} 已排进 ${target} 的合并队列(检查过了就进),等它合`)
-      const enqueuedAt = deps.now()
+      // 已经在队列里 / 已开自动合并(上一次回应丢了、或上一次等超时了)⇒ 直接接着等,不再请求一次(gh 会报 already in queue)。
+      const before = queueState(layer.number)
+      const active = (q: QueueState | null) => !!q && q.headRefOid === head && (q.state === 'MERGED' || q.isInMergeQueue || q.autoMerge)
+      if (!active(before)) {
+        const enq = await net(() => gh('pr', 'merge', String(layer.number), '--auto', '--match-head-commit', head))
+        if (enq.code !== 0 && !active(queueState(layer.number))) {
+          return done(CI_LAND_EXIT.moved, `#${layer.number} 进不了合并队列:${lastLine(enq)}(重跑 ci land ${opts.top} 接着来)`)
+        }
+        deps.log(`#${layer.number} 已排进 ${target} 的合并队列(PR 自己的检查过了就进),等它合`)
+      } else deps.log(`#${layer.number} 已经在队列里 / 开着自动合并,接着等`)
+      let lastActive = deps.now()
       for (;;) {
-        if (deps.now() > deadline) return done(CI_LAND_EXIT.timeout, `等 #${layer.number} 从合并队列合进去超时(还在队列里;已合 ${merged.map(n => `#${n}`).join('、') || '无'})`)
+        if (deps.now() > deadline) {
+          const q = queueState(layer.number)
+          const where = q?.isInMergeQueue ? '还在合并队列里' : q?.autoMerge ? '开着自动合并、在等 PR 自己的检查' : '不在队列里'
+          return done(CI_LAND_EXIT.timeout, `等 #${layer.number} 合进去超时:它${where}${q?.isInMergeQueue || q?.autoMerge ? ',GitHub 之后仍可能把它合进去(gh pr view ' + layer.number + ' 看)' : ''};已合 ${merged.map(n => `#${n}`).join('、') || '无'}`)
+        }
         const q = queueState(layer.number)
         if (!q) {
           if (++blips >= MAX_BLIPS) return done(CI_LAND_EXIT.precondition, `gh 连续 ${blips} 次没回东西(登录态?限流?)`)
           await deps.sleep(BLIP_MS); continue
         }
         blips = 0
-        const v = judgeQueue(q, head, deps.now() - enqueuedAt)
+        if (q.isInMergeQueue || q.autoMerge) lastActive = deps.now()
+        const v = judgeQueue(q, head, deps.now() - lastActive)
         if (v === 'merged') { last = q.mergeCommit ?? ''; break }
-        if (v === 'moved') return done(CI_LAND_EXIT.moved, `#${layer.number} 的 head 变了(${head.slice(0, 8)} → ${q.headRefOid.slice(0, 8)}):没看过的版本不合,重新跑一次`)
-        if (v === 'dequeued') return done(CI_LAND_EXIT.red, `#${layer.number} 离开了合并队列却没合:多半是队列那一轮(三平台)红了,或者 PR 自己的 CI 红了、被人取消。看 gh pr checks ${layer.number} 和 Actions 里 merge_group 那一轮`)
+        if (v === 'moved') return done(CI_LAND_EXIT.moved, `#${layer.number} 的 head 不是钉住的那一版(${head.slice(0, 8)} → ${q.headRefOid.slice(0, 8)})${q.state === 'MERGED' ? ',而且已经被合进去了 —— 合进去的不是这次看过的版本,人看一眼' : ':没看过的版本不合,重新跑一次'}`)
+        if (v === 'dequeued') return done(CI_LAND_EXIT.red, `#${layer.number} 离开了合并队列却没合:多半是队列那一轮(三平台)红了,也可能和排在前面的冲突、或被人移出。看 gh pr view ${layer.number} 的时间线和 Actions 里 merge_group 那一轮`)
+        if (v === 'awaiting_checks') {
+          // 还没进队列,在等 PR 自己的检查:红了就别干等到总超时。
+          const pv = ghJson<{ statusCheckRollup: RollupItem[] | null }>('pr', 'view', String(layer.number), '--json', 'statusCheckRollup')
+          const verdict = pv ? judgeRollup(pv.statusCheckRollup ?? [], 1) : null
+          if (verdict?.kind === 'red') return done(CI_LAND_EXIT.red, `#${layer.number} 自己的 CI 红了:${verdict.failed.join('、')}(开着自动合并,不会进队列;看是不是 flake:wechat-cc ci triage --sha ${head})`)
+        }
         await deps.sleep(QUEUE_POLL_MS)
       }
       merged.push(layer.number)
       deps.log(`#${layer.number} 已合${last ? `(${last.slice(0, 8)})` : ''}`)
     }
-    return done(CI_LAND_EXIT.landed, `合完 ${merged.length} 层(经合并队列):${merged.map(n => `#${n}`).join(' → ')}。${target} 推送应由队列那一轮的 tree 回执覆盖:wechat-cc ci triage --wait --rerun --sha ${last || `origin/${target}`}`)
+    // 队列可能一次快进好几个 PR:这一层的合入提交不一定是 dev 推送的那一个。triage 看现在的顶端。
+    const tip = git('fetch', 'origin', target).code === 0 ? git('rev-parse', `origin/${target}`).stdout.trim() : ''
+    const r = done(CI_LAND_EXIT.landed, `合完 ${merged.length} 层(经合并队列):${merged.map(n => `#${n}`).join(' → ')}${last ? `,最后一层合入 ${last.slice(0, 8)}` : ''}。${target} 推送应由队列那一轮的 tree 回执覆盖:wechat-cc ci triage --wait --rerun --sha ${tip || `origin/${target}`}`)
+    return last ? { ...r, mergeSha: last } : r
   }
 
   // ── 等最上面那个的 CI ───────────────────────────────────────────

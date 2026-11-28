@@ -4,7 +4,7 @@
 
 `.github/workflows/ci.yml` 在 push 到 `master` / `dev`,以及所有 PR 上跑。自改流水线推 `self/<id>` 时开一个进 `dev` 的 PR,它「CI 绿才进 dev」的闸门架在那个 PR 的 CI 上(2026-10-23 起;以前是 `self/**` 的推送单跑,两处都列会让同一提交跑两遍)。
 
-- **build · ${{ matrix.os }}** —— 进 `dev` 的 PR 只跑 `ubuntu-latest`;合并队列、推送、进 `master` 的发版 PR、叠起来的 PR 跑 `ubuntu-latest` / `macos-latest` / `windows-latest` 三平台,`fail-fast: false`(一条红不该让另外两条看不见)。每平台:`bun run typecheck` → `bun run depcheck` → 编译 `cli.ts` / `docs.ts` / `setup.ts` → 编译版 sidecar smoke → `bun run test`。
+- **build · ${{ matrix.os }}** —— 仓库变量 `MERGE_QUEUE=on` 时,进 `dev` 的 PR 只跑 `ubuntu-latest`(只限这个矩阵:动了原生代码的 `app · native push vectors` 照旧在 macOS 上跑);删掉变量就回到 PR 三平台(关队列、用 `ci land --direct` 时一起关);合并队列、推送、进 `master` 的发版 PR、叠起来的 PR 跑 `ubuntu-latest` / `macos-latest` / `windows-latest` 三平台,`fail-fast: false`(一条红不该让另外两条看不见)。每平台:`bun run typecheck` → `bun run depcheck` → 编译 `cli.ts` / `docs.ts` / `setup.ts` → 编译版 sidecar smoke → `bun run test`。
 - **node · core suite** —— `npm run test:node`,同一套源码在 node 下再跑一遍。这条不是冗余:`bun:sqlite` 的 URI 打开方式、`bun:test` 的 import,在 Mac 上看着好好的,换个运行时就炸。本地复现就是 `npm run test:node`。
 - **ci · gate** —— 汇总:上面任何一个作业红了 / 取消了就红,跳过的不算。dev 的规则集只要求这一条(不直接要求 `build · <os>`:矩阵作业被跳过时只报一条名字没展开的检查,只改文档的 PR 会永远等着)。
 - **changes · paths** —— 一个只算一件事的小作业(`dorny/paths-filter`):这一推里 `apps/desktop/**` 动没动过。
@@ -18,7 +18,7 @@
 
 部署前不再本机 `verify --full`,除非部署的 tree 没被 CI 跑过;这时先补验证,重型测试放专用 Mac mini。部署后主动跑 `selftest phone`、`selftest chat`、`selftest workbench` 和本次新增路由的闭环。4h soak 后台跑,只有改开机/关机/重启顺序才等待它,并用 `--min-restarts 1`。
 
-`changes` 在 PR checkout 的 merge-ref 上上传 `ci-tree-<tree>` artifact,内容包含 tree、merge SHA、repository、run ID、attempt。dev push 按完整 tree SHA 查询回执,核对来源 workflow 是 `.github/workflows/ci.yml`、event 为 PR、run ID 一致、回执 attempt 不晚于当前 attempt(只 rerun failed 时保留旧回执,同 run 的 GITHUB_SHA 不变)、整轮 completed/success,且 ubuntu/macOS/Windows 三条 build 全成功。只查最近 100 份同名回执;超出范围保守全跑。复用后路径过滤器不执行,其余作业由空输出跳过,只留下 `changes` 快速报绿。`ci triage --sha` 返回 0,打印对应 PR run。
+`changes` 在 PR checkout 的 merge-ref 上、以及合并队列那一轮的队列提交上上传 `ci-tree-<tree>` artifact,内容包含 tree、merge SHA、repository、run ID、attempt。dev push 按完整 tree SHA 查询回执,核对来源 workflow 是 `.github/workflows/ci.yml`、event 为 PR 或 merge_group、run ID 一致、回执 attempt 不晚于当前 attempt(只 rerun failed 时保留旧回执,同 run 的 GITHUB_SHA 不变)、整轮 completed/success,且 ubuntu/macOS/Windows 三条 build 全成功。只查最近 100 份同名回执;超出范围保守全跑。复用后路径过滤器不执行,其余作业由空输出跳过,只留下 `changes` 和 `ci · gate` 快速报绿。进 dev 的 PR 只有 Linux 一条 build,它那一轮不算覆盖;dev 推送靠的是队列那一轮。已知弱点(这次之前就有):三平台 PR 回执只证明 tree 一样、三条 build 绿,按路径跳过的作业(比如 relay)不在里面。`ci triage --sha` 返回 0,打印对应 PR run。
 
 同 PR 的新运行仍取消旧运行;`ci land` 按 workflow/作业名和运行时间或 run ID 取最新检查,无 startedAt 的 cancelled 也可用 run ID 比较。`ci triage` 取同 SHA 最新运行,同一轮里有更新成功同名 job 才忽略旧 cancelled;新失败不能被旧成功掩盖。
 
@@ -27,6 +27,17 @@
 PR 标题/正文由 `test-shrink-check.ts` 用 GITHUB_TOKEN (`GH_TOKEN`) 调 `gh api repos/{repo}/pulls/{n}` 读取当前值;API 失败才退回事件 env。改正文后直接 rerun,无需空提交或 close/reopen。
 
 bun 版本在 workflow 里**钉死**(`bun-version: 1.3.14`),不用 `latest` —— 上游发新版能让 CI 在没有任何提交的情况下自己变红。升 bun 该是一件有人盯着的事。
+
+## 合并队列的开关(2026-11-27)
+
+两样东西一起开、一起关:
+
+- **规则集** `dev: merge queue + ci · gate`(仓库 Settings › Rules):合并队列(squash、ALLGREEN、一组最多 5 个、等 1 分钟凑组、检查最多等 90 分钟)+ 必过检查只有 `ci · gate`(来源 GitHub Actions)。仓库管理员可以绕过,发版的簿记合并要直推 dev。
+- **仓库变量** `MERGE_QUEUE=on`(Settings › Variables):有它,进 dev 的 PR 才缩成只跑 Linux。
+
+开的顺序:先建规则集,再设变量 —— 反过来,中间那段 PR 只有 Linux、却还能不经队列合进来。关的顺序反过来:先删变量(PR 回到三平台),再停规则集,之后用 `ci land --direct`。`ci land`(队列模式)开始前会查 dev 的有效规则里有没有合并队列,没有就停下来让你用 `--direct`,不会走成普通的自动合并。
+
+管理员直推 dev(簿记合并)绕过了队列:簿记合并的树和上一个 dev 一样,所以 dev 推送照样能用上一轮的 tree 回执;树不一样的直推就是一轮完整 CI,部署前照样要看它绿。
 
 ## Windows 排除清单的规矩
 

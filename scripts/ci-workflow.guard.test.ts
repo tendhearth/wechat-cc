@@ -216,7 +216,8 @@ describe('ci.yml —— 提速的边界', () => {
   })
   it('只有进 dev 的 PR 是 Linux 一个平台;队列、推送、发版 PR、叠起来的 PR 都是三平台', () => {
     const os = String((jobs.build as { strategy?: { matrix?: { os?: unknown } } }).strategy?.matrix?.os)
-    expect(os).toBe(`\${{ (github.event_name == 'pull_request' && github.base_ref == 'dev') && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest","macos-latest","windows-latest"]') }}`)
+    // 只在仓库变量 MERGE_QUEUE=on 时缩:变量删掉就回到 PR 三平台(队列关掉时 ci land --direct 才走得通)。
+    expect(os).toBe(`\${{ (github.event_name == 'pull_request' && github.base_ref == 'dev' && vars.MERGE_QUEUE == 'on') && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest","macos-latest","windows-latest"]') }}`)
   })
   it('ci · gate 是唯一的必过检查:always 跑、needs 全部作业、红或取消就红', () => {
     const gate = jobs.gate as { name?: string; if?: string; needs?: string[]; steps?: Array<{ run?: string; env?: Record<string, string> }> }
@@ -232,6 +233,10 @@ describe('ci.yml —— 提速的边界', () => {
     expect(queue.if).toBe("github.event_name == 'merge_group'")
     expect(queue.env?.BASE_SHA).toBe('${{ github.event.merge_group.base_sha }}')
     expect(queue.run).toContain("grep -qv '\\.md$'")
+    // 改名成 .md 算删源码;diff 失败要红,不能被管道吞掉;空 diff 全跑。
+    expect(queue.run).toContain('set -eu')
+    expect(queue.run).toContain('git diff --no-renames --name-only')
+    expect(queue.run).toContain('[ -z "$files" ]')
     expect(queue.run).not.toContain('${{')
     for (const [k, v] of Object.entries(jobs.changes!.outputs ?? {})) expect(v, k).toContain('steps.queue.outputs.all')
   })
@@ -256,6 +261,8 @@ describe('ci.yml —— 提速的边界', () => {
     expect(c['cancel-in-progress']).toBe("${{ github.event_name == 'pull_request' }}")
     // 推送按 sha 分组:两次推 dev 不会互相顶掉(ci triage --wait 等的是具体提交)。
     expect(c.group).toContain('github.sha')
+    // 同一个 SHA 的 merge_group 和 push 不共用一组(否则后来的会顶掉排着的那一个)。
+    expect(c.group).toContain("format('{0}-{1}', github.event_name, github.sha)")
     expect(c.group).toContain('github.event.pull_request.number')
   })
   it('pull_request 不限 base:叠起来的上层 PR(base 是 claude/…)也要有 CI,一串的闸门就是它', () => {

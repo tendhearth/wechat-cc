@@ -20,7 +20,7 @@ on:
 # 同一个 PR 推了新版本(rebase、改评审意见)⇒ 旧的那次作废,不再白跑 20 分钟。
 # 只对 PR:dev / master 的推送一条都不取消 —— `ci triage --wait` 和自改闸门都按提交看结果。
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.event_name, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -73,8 +73,11 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
+          set -eu
           git fetch --no-tags --depth=1 origin "$BASE_SHA"
-          if git diff --name-only "$BASE_SHA" HEAD | grep -qv '\.md$'; then echo "all=true" >> "$GITHUB_OUTPUT"; fi
+          # --no-renames:把源码改名成 .md 也要算「删了源码」;diff 本身失败 ⇒ set -e 让这一步红,不当成「只改了文档」。
+          files=$(git diff --no-renames --name-only "$BASE_SHA" HEAD)
+          if [ -z "$files" ] || printf '%s\n' "$files" | grep -qv '\.md$'; then echo "all=true" >> "$GITHUB_OUTPUT"; fi
       - uses: dorny/paths-filter@v3
         if: steps.coverage.outputs.covered != 'true' && github.event_name != 'merge_group'
         id: filter
@@ -117,10 +120,11 @@ jobs:
       # Let every platform complete so we can see which ones break at a
       # glance instead of the first failure cancelling the rest.
       fail-fast: false
-      # 进 dev 的 PR 只跑 Linux(快速反馈);三平台在合并队列里跑一次,那才是进 dev 的门。
+      # 仓库变量 MERGE_QUEUE=on(dev 的合并队列开着)时:进 dev 的 PR 只跑 Linux(快速反馈),三平台在合并队列里跑一次,
+      # 那才是进 dev 的门。变量删掉 ⇒ 回到 PR 三平台(队列关掉、ci land --direct 时用)。
       # 进 master 的发版 PR、叠起来的 PR、队列、推送照旧三平台。
       matrix:
-        os: ${{ (github.event_name == 'pull_request' && github.base_ref == 'dev') && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest","macos-latest","windows-latest"]') }}
+        os: ${{ (github.event_name == 'pull_request' && github.base_ref == 'dev' && vars.MERGE_QUEUE == 'on') && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest","macos-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
 
     steps:

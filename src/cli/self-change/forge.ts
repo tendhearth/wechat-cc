@@ -18,7 +18,8 @@ export interface Forge {
   /** 这条分支上开着的 PR;没有就开一个(重跑 / `--resume` 不重复开)。 */
   ensurePr(o: { cwd: string; branch: string; base: string; title: string; body: string }): Promise<PrRef>
   /** 按 ci land 的判法看 CI、squash 合进 base。退出码就是 CI_LAND_EXIT。 */
-  land(o: { cwd: string; pr: number; base: string }): Promise<{ exitCode: number; message: string }>
+  /** mergeSha:经合并队列合进去时这个 PR 在 base 上的合入提交(队列可能同批多快进几个,别拿 base 顶端当它)。 */
+  land(o: { cwd: string; pr: number; base: string }): Promise<{ exitCode: number; message: string; mergeSha?: string }>
   /** 作废时关掉,免得整合者的 PR 列表里躺着一条永远不会合的。失败只记一笔。 */
   close(o: { cwd: string; pr: number; comment: string }): Promise<void>
 }
@@ -55,7 +56,7 @@ export function ghForge(makeDeps: (cwd: string) => CiLandDeps): Forge {
     async land(o) {
       // dev 开着合并队列:PR 的 Linux CI + 队列里三平台那一轮,60 分钟不够宽裕。
       const r = await runCiLand(makeDeps(o.cwd), { top: o.pr, target: o.base, minChecks: 1, timeoutMin: 90, queue: o.base === 'dev' })
-      return { exitCode: r.exitCode, message: r.message }
+      return { exitCode: r.exitCode, message: r.message, ...(r.mergeSha ? { mergeSha: r.mergeSha } : {}) }
     },
     async close(o) {
       const deps = makeDeps(o.cwd)
