@@ -140,7 +140,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
    * 文,回报只是"事情有进展,看这里"的一句指路。
    */
   function reportOnce(running:Active,body?:string):void {
-    if(store.plans.get(running.taskId)?.state==='approved'||running.relayClosing||running.relayReportedTurn===running.turnSeq)return
+    if(store.plans.get(store.plans.root(running.taskId))?.state==='approved'||running.relayClosing||running.relayReportedTurn===running.turnSeq)return
     if (running.reportedTurn===running.turnSeq) return
     running.reportedTurn=running.turnSeq
     try { ctx.deps.reports?.enqueue(running.taskId,running.turnSeq,body) } catch (err) { ctx.log?.('MATTER_REPORT',`enqueue failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
@@ -178,7 +178,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     if (!snapshot?.retained||snapshot.foreground!=='idle'||snapshot.backgroundCount!==0) return
     collectTurnArtifacts(running)
     if (!quiet(running)) {
-      if(store.plans.get(running.taskId)?.state==='approved'){
+      if(store.plans.get(store.plans.root(running.taskId))?.state==='approved'){
         store.atomic(()=>{finishLedger(ctx,running,'completed');store.bump(running.taskId)})
         void domains.relay?.(running,'completed',running.questions.pending().length>0||running.permissions.pending().length>0).catch(error=>ctx.log?.('MATTER_RELAY',String(error)))
       }
@@ -360,7 +360,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
       state.runningText.delete(running.identity)
       let terminalCommitted=false
       try {
-        store.atomic(()=>{try{store.execution.endRun(running.taskId,running.identity,'cancelled')}catch{/* 只少一轮的结局 */};finishLedger(ctx,running,'cancelled');store.update(running.taskId,'cancelled',running.restartInterrupted?'daemon_restarted':null);if(store.plans.get(running.taskId)?.state!=='approved')stageFinishedNotice(running,'cancelled')})
+        store.atomic(()=>{try{store.execution.endRun(running.taskId,running.identity,'cancelled')}catch{/* 只少一轮的结局 */};finishLedger(ctx,running,'cancelled');store.update(running.taskId,'cancelled',running.restartInterrupted?'daemon_restarted':null);if(store.plans.get(store.plans.root(running.taskId))?.state!=='approved')stageFinishedNotice(running,'cancelled')})
         terminalCommitted=true
         matterSync(m=>m.setLifecycle(running.taskId,'done'))
         publishFinishedNotices()

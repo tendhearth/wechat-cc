@@ -36,7 +36,7 @@ export function matterApprovals(){
       // 待登记的目标还没有工作台编号，批准只认出卡时的原请求。
       if(registrationPath)return
       const parsed=MatterPlanRequest.parse(input),{project:_project,isolation:_isolation,base:_base,...rest}=parsed
-      records.set(key(scope,tool,{...rest,target:target.target,legs:target.legs}),record)
+      records.set(key(scope,tool,{...rest,target:target.target,legs:target.legs.map(({executor,brief,parallel})=>parallel?{parallel,brief}:{executor,brief})}),record)
     },
     /** 用掉一次批准(开分享链接:点一次头只开一个)。 */
     consume(scope:string,tool:string,input:unknown){records.delete(key(scope,tool,input))},

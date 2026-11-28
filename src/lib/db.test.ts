@@ -1718,3 +1718,30 @@ it('v123 adds nullable terminal location to existing sessions and can be replaye
     try { expect(() => migrations[122]!(empty)).not.toThrow() } finally { empty.close() }
   } finally { db.close() }
 })
+
+it('v124 adds parallel members without changing a v123 sequential plan',()=>{
+  const db=migratedTo(123)
+  try{
+    db.exec(`INSERT INTO matters(id,kind,title,owner_chat_id,created_at,updated_at) VALUES
+      ('12345678','task','旧事','owner',1,2),('87654321','task','一版','owner',1,2);
+      INSERT INTO matter_plans VALUES('12345678','approved',3,3);
+      INSERT INTO matter_plan_legs VALUES('12345678',1,'codex','先做','running','run-1',0,NULL);`)
+    const before=db.query('SELECT * FROM matter_plan_legs').all()
+    runMigrations(db,migrations)
+    expect(db.query('SELECT * FROM matter_plan_legs').all()).toEqual(before)
+    expect(db.query('SELECT * FROM matter_plan_candidates').all()).toEqual([])
+    const insert=db.query(`INSERT INTO matter_plan_candidates(matter_id,position,ordinal,executor,task_id,run_id,status,chosen) VALUES
+      ('12345678',?,?,'codex',?,?,'completed',?)`)
+    insert.run(1,1,'87654321','candidate-1',1)
+    expect(()=>insert.run(1,2,null,null,1)).toThrow()
+    expect(()=>insert.run(2,1,null,null,0)).toThrow()
+    expect(()=>insert.run(1,4,null,null,0)).toThrow()
+    migrations[123]!(db)
+    expect(db.query('SELECT task_id,run_id,compared FROM matter_plan_candidates').all()).toEqual([{task_id:'87654321',run_id:'candidate-1',compared:0}])
+    db.exec("DELETE FROM matters WHERE id='87654321'")
+    expect(db.query('SELECT task_id FROM matter_plan_candidates').all()).toEqual([{task_id:null}])
+    db.exec("DELETE FROM matters WHERE id='12345678'")
+    expect(db.query('SELECT * FROM matter_plan_candidates').all()).toEqual([])
+    expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
+  }finally{db.close()}
+})

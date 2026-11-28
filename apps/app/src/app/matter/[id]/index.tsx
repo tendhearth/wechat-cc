@@ -206,6 +206,7 @@ export default function Matter() {
     const err = r === 'ok' || r === 'busy' ? null : r.error
     if (r === 'ok') setWtNote(t(lang, action === 'commit' ? 'progress.wtCommitted' : action === 'merge' ? (mergedNow ? 'progress.wtMerged' : 'progress.wtNothingToMerge') : action === 'reopen' ? 'progress.wtReopened' : 'progress.wtRemoved'))
     else if (err === 'worktree_dirty') setWtNote(t(lang, 'progress.wtDirty'))
+    else if (err === 'parallel_not_ready') setWtNote(t(lang, 'progress.parallelNotReady'))
     else if (err === 'worktree_uncommitted') setWtNote(t(lang, 'progress.wtUncommitted'))
     else if (err === 'merge_manual') setWtNote(t(lang, 'progress.wtMergeManual'))
     else if (err === 'project_busy') setWtNote(t(lang, 'progress.wtProjectBusy'))
@@ -305,14 +306,24 @@ export default function Matter() {
             <Icon name="chevronRight" color={c.inkSoft} />
           </Pressable>
         )) : null}
-        {(d.agentRuns?.length??0)>1 ? <View testID="progress-agents" style={{ gap: space.m }}>
+        {d.parallelGroups?.map(group=><DetailSection key={group.position} testID={`progress-parallel-${group.position}`}
+          title={t(lang,'progress.parallel',{position:group.position,count:group.members.length})}>
+          {group.members.map(member=>{
+            const label=`${agentName(member.executor,d.matter.agentNames)} · ${t(lang,`progress.agent.${member.status}`)}${member.chosen?` · ${t(lang,'progress.parallelChosen')}`:''}`
+            const taskId=member.taskId
+            return taskId&&taskId!==id
+              ? <Pressable key={member.executor} accessibilityRole="button" onPress={()=>router.push(`/matter/${encodeURIComponent(taskId)}`)} style={{paddingVertical:space.m}}><Txt role="body">{label} ›</Txt></Pressable>
+              : <Txt key={member.executor} role="body">{label}</Txt>
+          })}
+        </DetailSection>)}
+        {(d.agentRuns?.length??0)>(d.parallelGroups?.length?0:1) ? <View testID="progress-agents" style={{ gap: space.m }}>
           <Txt role="meta" tone="inkSoft">{t(lang,'progress.agents')}</Txt>
           {(d.agentRuns??[]).filter(a=>a.matterId===id).map(a=><View key={a.runId} style={{ flexDirection:'row',gap:space.m,alignItems:'flex-start' }}>
             <Txt role="meta" tone="inkSoft">{agentName(a.executor, d.matter.agentNames)}</Txt>
             <View style={{ flex:1,gap:space.xs }}><Txt role="bubble" content="user">{a.brief}</Txt><Txt role="meta" tone="inkSoft">{t(lang,`progress.agent.${a.status}`)}</Txt></View>
           </View>)}
         </View> : null}
-        {(d.agentRuns?.length??0)>1 && d.notes?.length ? <DetailSection key={`ledger:${id}`} testID="progress-ledger" title={t(lang,'progress.records')}>
+        {((d.agentRuns?.length??0)>1 || d.parallelGroups?.length) && d.notes?.length ? <DetailSection key={`ledger:${id}`} testID="progress-ledger" title={t(lang,'progress.records')}>
           {d.notes.filter(n=>n.matterId===id).map(n=><View key={n.id} style={{ gap:space.xs }}>
             <Txt role="meta" tone="inkSoft">{n.author==='cc'?'CC':n.author==='owner'?t(lang,'chat.me'):agentName(n.author, d.matter.agentNames)}</Txt>
             <Txt role="body" content="user" selectable>{n.text}</Txt>

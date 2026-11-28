@@ -264,7 +264,7 @@ export function makeWorkbenchStore(db: Db, opts: { matters?: MatterStore } = {})
     /** Real-time keyset paging, not a snapshot: updated tasks can move before a cursor. */
     listPage(query:WorkbenchListQuery={}):TaskPage {
       const {q,archived,limit,filterHash,cursor}=listFilters(query)
-      const where:string[]=[],args:Array<string|number>=[]
+      const where=['NOT EXISTS(SELECT 1 FROM matter_plan_candidates c WHERE c.task_id=workbench_tasks.id AND c.matter_id<>workbench_tasks.id)'],args:Array<string|number>=[]
       if(archived!=='all')where.push(archived==='only' ? 'archived_at IS NOT NULL' : 'archived_at IS NULL')
       if(q) {
         const pattern='%'+q.replace(/[\\%_]/g,char=>'\\'+char)+'%'

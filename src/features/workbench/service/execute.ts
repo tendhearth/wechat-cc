@@ -1,3 +1,4 @@
+import {parallelProgress} from './parallel-progress'
 import {readTopicBrief} from './topic-brief'
 /** 接力的棒、执行者接上了记录本工具时,代替话题简报的那一行。 */
 export const MATTER_CONTEXT_HINT='需要了解主人之前怎么聊过这件事时，用 matter_context 查；不需要就别查。'
@@ -230,6 +231,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       if (running.cancelled) revokeCredentials(running)
       store.update(task.id,running.cancelled ? 'cancelling' : 'running');
       store.ledger.running(running.ledgerRunId??running.identity)
+      parallelProgress(ctx,running,'running')
       if (running.cancelled) { finalStatus='cancelled'; return }
       const preparationAbort=new AbortController()
       void running.stop.then(()=>preparationAbort.abort())
@@ -300,10 +302,15 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       // 回退之后的第一轮:前置一句告知(评审 8);送达(第一条事件)才 markNoticed,派发失败下次还带
       const rewound=domains.rewind?.notice(task.id)??null
       // 接力中的一棒:请执行者用一行状态收尾,判断做没做完先读这一行(domain/relay-decision.ts)。
-      const statusAsk=store.plans.get(task.id)?.state==='approved'?`\n\n${RELAY_STATUS_ASK}`:''
-      const body=(rewound?`${rewound.text}\n\n${text}`:text)+statusAsk
+      const statusAsk=store.plans.get(store.plans.root(task.id))?.state==='approved'?`\n\n${RELAY_STATUS_ASK}`:''
       const pendingLedger=!!running.ledgerRunId&&store.ledger.needsInjection(running.ledgerRunId)
-      const records=pendingLedger?ledgerBrief(store.ledger.notes(task.id)):''
+      const ledgerRoot=store.plans.root(task.id)
+      const records=pendingLedger?ledgerBrief(store.ledger.forExecutor(task.id,store.ledger.notes(ledgerRoot))):''
+      const member=store.plans.candidateForTask(task.id)
+      const parallelAsk=member&&member.runId===running.ledgerRunId
+        ? '\n\n你在独立工作区做这一棒的一版。请只在你的工作区工作，不读取其他版本的工作区。做完时报告验证结果，把交付改动提交到当前分支，供主人选择。'
+        : ''
+      const body=(rewound?`${rewound.text}\n\n${text}`:text)+parallelAsk+statusAsk
       const opening0=matterToolsAvailable?records:records.replace('；可用 matter_notes 查询完整记录','')
       // 派活三档(总纲「少给,要用再取」):接力的棒不推话题简报,给一行「要用就查」。
       // 这家执行者没接上记录本工具(spec 为 null)就查不了 ⇒ 照旧把简报推进去,别让它两头落空。
@@ -346,6 +353,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         // 它想写就写 —— 没有什么要 fail-closed 的。
         if (!nowQuiet&&wasQuiet) {
           store.ledger.running(running.ledgerRunId??running.identity)
+          parallelProgress(ctx,running,'running')
           cancelIdleClose(running)
           // 自己醒来这条路唯一能推进 turnSeq 的地方(评审修复轮 1)——没有比这更早的信号
           // 了,所以是尽力而为:一段自动续作连着抖好几次 quiet↔busy 时,这里会跟着抖好几
@@ -485,7 +493,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           try{store.execution.endRun(task.id,running.identity,status,finalError)}catch{/* 只少一轮的结局 */}
           finishLedger(ctx,running,status)
           store.update(task.id,status,finalError)
-          if(store.plans.get(task.id)?.state!=='approved'&&!running.relayClosing&&running.relayReportedTurn!==running.turnSeq)stageFinishedNotice(running,status,finalError,willReport)
+          if(store.plans.get(store.plans.root(task.id))?.state!=='approved'&&!running.relayClosing&&running.relayReportedTurn!==running.turnSeq)stageFinishedNotice(running,status,finalError,willReport)
         })
         terminalCommitted=true
         matterSync(m=>m.setLifecycle(task.id,status==='interrupted'?'open':'done'))
@@ -498,7 +506,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         // 需要处理"/问"交给 X 继续?")直接打架。失败/取消不经这里回报,不代表主人收不
         // 到通知——stageFinishedNotice 走的是另一条既有的完成通知路径,不受这里影响。
         if (status==='completed') {
-          if(store.plans.get(task.id)?.state!=='approved'&&!running.relayClosing)reportOnce(running,body)
+          if(store.plans.get(store.plans.root(task.id))?.state!=='approved'&&!running.relayClosing)reportOnce(running,body)
           if(store.ledger.enabled(task.id))try{ctx.deps.onTaskTurnCompleted?.(task.id)}catch{/* 话题写回不影响收尾 */}
         }
         // 回忆(task-5,fix round 3,评审必判①):这是唯一的触发点(round 2
@@ -558,15 +566,17 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     let firstTurn=null as string|null
     let planCancelled=false
     const handoffPeer=store.atomic(()=>{
-      const plan=store.plans.get(task.id)
-      if(plan?.state==='approved'&&!acceptance?.ledgerOpening){
-        const leg=plan.legs.find(l=>l.runId===store.ledger.agents(task.id).at(-1)?.runId&&l.state==='stopped')
+      const root=store.plans.root(task.id),plan=store.plans.get(root)
+      const candidate=store.plans.candidateForTask(task.id)
+      const baton=store.ledger.latestForTask(task.id)
+      if(plan?.state==='approved'&&!acceptance?.ledgerOpening&&!(candidate&&candidate.runId===baton)){
+        const leg=plan.legs.find(l=>l.runId===baton&&l.state==='stopped')
         // 等主人回话的那一棒:主人回什么都是在答它,拆法照旧(第三轮真模型验收 run-58:回了「选简洁版」拆法却作废,第三棒没人做)。
-        if(leg&&(isRelayContinue(text)||leg.stopReason==='leg_asked'))store.plans.resume(task.id,leg.runId!)
-        else if((!queuedInputId||!store.liveInputs.get(queuedInputId))&&!isRelayContinue(text)||!plan.legs.some(l=>l.state==='running'))planCancelled=store.plans.cancel(task.id)
+        if(leg&&(isRelayContinue(text)||leg.stopReason==='leg_asked'))store.plans.resume(root,leg.runId!)
+        else if((!queuedInputId||!store.liveInputs.get(queuedInputId))&&!isRelayContinue(text)||!plan.legs.some(l=>l.state==='running'))planCancelled=store.plans.cancel(root)
       }
       firstTurn=store.execution.accept(task.id,runId,execution)
-      if(acceptance?.ledgerOpening)store.ledger.start(task.id,runId,task.providerId,text)
+      if(acceptance?.ledgerOpening)store.ledger.start(root,runId,task.providerId,text)
       const bound=store.attachments.bind(attachments.map(a=>a.id),task.id,draftId,attachmentPolicy?continuationAttachmentScope(task.id,attachments):acceptance?.scope)
       if(!sameAttachments(bound,attachments))throw Error('invalid_attachment_changed')
       // A queued receipt keeps the ORIGINAL accepted run, even when this is a new dispatch run.
@@ -631,6 +641,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       ...(ruleDecide ? { decide: (facts: PermissionFacts) => ruleDecide(() => permissionAsk(facts)) } : {}),
     })
     const questions=makeRunUserInput({taskId:task.id,audit:event=>{
+      if(!running.finishing&&!running.cancelled)parallelProgress(ctx,running,event.type==='request'?'waiting':'running')
       if(event.type!=='request')opinion?.clear(event.request.id)
       if(event.type==='request'){
         addRunEvent('system',`执行者提问：${JSON.stringify(event.request)}`)
@@ -652,7 +663,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       launch:runText=>execute(task,runText,running),
       execution,
       attachments:dispatchAttachments,
-      ledgerOpening:acceptance?.ledgerOpening??false,ledgerRunId:store.ledger.agents(task.id).at(-1)?.runId,interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++state.order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
+      ledgerOpening:acceptance?.ledgerOpening??false,ledgerRunId:acceptance?.ledgerOpening?runId:store.ledger.latestForTask(task.id),interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++state.order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
       cancelled:false,spawnAttempted:false,done,resolveDone,stop,signalStop,permissions,permissionPrompts,publicFinished:false,uncertain:false,artifactsCollected:false,turnSeq:0,reportedTurn:-1,recollectedTurn:-1,credentialsMinted:false,credentialsRevoked:false,
       ...(firstTurn?{turn:{id:firstTurn,open:true}}:{}),
     }

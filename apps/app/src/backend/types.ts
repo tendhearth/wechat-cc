@@ -80,6 +80,7 @@ export type BackendCode = 'stale' | 'busy' | 'offline' | 'revoked' | 'timeout' |
   | 'session_busy' | 'folder_busy' | 'provider_missing' | 'folder_missing' | 'quota' | 'session_changed' | 'session_empty' | 'session_managed'
   | 'handoff_changed'
   | 'checkup_invalid' | 'checkup_rate_limited'
+  | 'parallel_not_ready'
   | 'worktree_not_git' | 'worktree_dirty' | 'worktree_uncommitted' | 'merge_manual' | 'project_busy' | 'worktree_branch_missing' | 'worktree_base_missing'
   | 'input_stale' | 'input_conflict'
   | 'too_large' | 'no_voice'

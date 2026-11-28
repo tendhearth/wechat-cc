@@ -55,13 +55,36 @@ export function makeMatterLedger(db:Db,now=()=>Date.now()){
   }
   return {
     notes,agents,terminals,
-    projectedAgents(id:string):MatterAgent[]{
-      const actual=agents(id),plan=plans.get(id)
-      if(plan?.state!=='approved')return actual
-      return [...actual,...plan.legs.filter(l=>l.state==='pending').map(l=>({matterId:id,runId:`plan:${id}:${l.position}`,executor:l.executor,brief:l.brief,position:l.position,status:'queued' as const,createdAt:plan.createdAt,endedAt:null}))].sort((a,b)=>a.position-b.position)
+    latestForTask(taskId:string):string|undefined{
+      const id=plans.root(taskId)
+      if(!plans.candidates(id).length)return agents(id).at(-1)?.runId
+      return db.query<{runId:string},[string,string]>(`SELECT a.run_id AS runId FROM matter_agents a
+        WHERE a.matter_id=? AND EXISTS(SELECT 1 FROM matter_turns t WHERE t.matter_id=? AND t.run_id=a.run_id)
+        ORDER BY a.position DESC LIMIT 1`).get(id,taskId)?.runId
     },
-    plan(id:string,legs:readonly {executor:string;brief:string}[]){
-      const headings=legs.map((l,i)=>`第 ${i+1} 棒 ${ledgerText(l.executor)}: `),budget=Math.max(1,Math.floor((LEDGER_NOTE_MAX-headings.join('').length-legs.length)/legs.length))
+    forExecutor<T extends MatterNote>(taskId:string,rows:readonly T[]):T[]{
+      const id=plans.root(taskId)
+      const peers=plans.candidates(id).filter(c=>c.taskId&&c.taskId!==taskId&&!c.chosen)
+      if(!peers.length)return [...rows]
+      const paths=peers.flatMap(c=>{
+        const row=db.query<{root:string},[string]>('SELECT root FROM workbench_worktrees WHERE task_id=?').get(c.taskId!)
+        return row?[row.root]:[]
+      })
+      return rows.filter(note=>note.kind!=='artifact'||!peers.some(c=>c.runId===note.runId))
+        .map(note=>({...note,text:paths.reduce((text,path)=>text.replaceAll(path,'[独立工作区]'),note.text)}))
+    },
+    projectedAgents(id:string):MatterAgent[]{
+      const plan=plans.get(id),members=plans.candidates(id)
+      const actual=agents(id).filter(a=>!members.some(m=>m.runId===a.runId)).map(a=>{
+        const leg=members.length?plan?.legs.find(l=>l.runId===a.runId):undefined
+        return leg?{...a,position:leg.position}:a
+      })
+      if(plan?.state!=='approved')return actual
+      return [...actual,...plan.legs.filter(l=>l.state==='pending'&&!members.some(m=>m.position===l.position)).map(l=>({matterId:id,runId:`plan:${id}:${l.position}`,executor:l.executor,brief:l.brief,position:l.position,status:'queued' as const,createdAt:plan.createdAt,endedAt:null}))].sort((a,b)=>a.position-b.position)
+    },
+    selection(id:string,runId:string,text:string){write(id,runId,'cc','plan',text,`selection:${runId}`)},
+    plan(id:string,legs:readonly {executor:string;brief:string;parallel?:readonly string[]}[]){
+      const headings=legs.map((l,i)=>`第 ${i+1} 棒 ${ledgerText(l.parallel?.join("、")??l.executor)}: `),budget=Math.max(1,Math.floor((LEDGER_NOTE_MAX-headings.join('').length-legs.length)/legs.length))
       write(id,null,'cc','plan',legs.map((l,i)=>headings[i]+short(ledgerText(l.brief),budget)).join('\n'),'plan:approved')
     },
     needsInjection:(runId:string)=>!!db.query('SELECT 1 FROM matter_agents WHERE run_id=? AND injected_at IS NULL').get(runId),
@@ -87,7 +110,7 @@ export function makeMatterLedger(db:Db,now=()=>Date.now()){
       page.nextBefore=page.truncated?rows[taken-1]?.id??null:null
       return page
     },
-    enabled:(id:string)=>!!plans.get(id)||agents(id).length>1||terminals.list(id).length>0,
+    enabled:(id:string)=>{const root=plans.root(id);return !!plans.get(root)||agents(root).length>1||terminals.list(id).length>0},
     recent:(id:string,limit=50)=>({notes:db.query<MatterNote,[string,number]>(`SELECT id,matter_id AS matterId,run_id AS runId,author,kind,text,created_at AS createdAt FROM (SELECT * FROM matter_notes WHERE matter_id=? ORDER BY id DESC LIMIT ?) ORDER BY id`).all(id,limit),notesTotal:db.query<{n:number},[string]>('SELECT COUNT(*) AS n FROM matter_notes WHERE matter_id=?').get(id)!.n}),
     start(matterId:string,runId:string,executor:string,brief:string){
       db.transaction(()=>{
@@ -120,8 +143,9 @@ export function makeMatterLedger(db:Db,now=()=>Date.now()){
       if(!id)throw Error('matter_ledger_forbidden')
       const row=db.query<{matterId:string|null},[string]>('SELECT matter_id AS matterId FROM workbench_tasks WHERE id=?').get(id)
       if(!row?.matterId)throw Error('matter_ledger_forbidden')
-      if(requested!==undefined&&requested!==row.matterId)throw Error('matter_scope_mismatch')
-      return row.matterId
+      const root=plans.root(row.matterId)
+      if(requested!==undefined&&requested!==root)throw Error('matter_scope_mismatch')
+      return root
     },
   }
 }

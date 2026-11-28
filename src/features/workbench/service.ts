@@ -1,3 +1,4 @@
+import {makeParallelDomain} from './service/parallel'
 import {makeRelayDomain} from './service/relay'
 import type {RelayTurnHook} from './service/relay-events'
 import {trackPreparation} from './service/state'
@@ -252,8 +253,9 @@ export function makeWorkbenchService(opts: Options) {
     quota: quotaDomain,
     scripts: scriptsDomain,
   })
-  const ledgerDomain=makeLedgerDomain(ctx,{execute:executeDomain,lifecycle:lifecycleDomain,admission:admissionDomain,entry:entryDomain,view:viewDomain})
-  const relayDomain=makeRelayDomain(ctx,{admission:admissionDomain,ledger:ledgerDomain})
+  const parallelDomain=makeParallelDomain(ctx,entryDomain)
+  const ledgerDomain=makeLedgerDomain(ctx,{execute:executeDomain,lifecycle:lifecycleDomain,admission:admissionDomain,entry:entryDomain,parallel:parallelDomain,view:viewDomain})
+  const relayDomain=makeRelayDomain(ctx,{admission:admissionDomain,ledger:ledgerDomain,parallel:parallelDomain,lifecycle:lifecycleDomain})
   const quotaHandoffDomain = makeQuotaHandoffDomain(ctx, { execute: executeDomain, quota: quotaDomain })
   const review = makeReviewDomain(ctx, {
     scripts: scriptsDomain,
@@ -272,6 +274,7 @@ export function makeWorkbenchService(opts: Options) {
   // 开机对账:全部建好之后再做(顺序同改造前)
   store.recover()
   store.plans.recover()
+  parallelDomain.recoverReports()
   store.liveInputs.recover()
   quarantineRestartContinuations(ctx)
   lifecycleDomain.adoptWriters()
@@ -336,7 +339,7 @@ export function makeWorkbenchService(opts: Options) {
     discardAttachmentUpload:attachmentsDomain.discardAttachmentUpload,takeChatImages:attachmentsDomain.takeChatImages,
     readAttachment:attachmentsDomain.readAttachment,
     discardAttachment:attachmentsDomain.discardAttachment,
-    setArchived:(id:string,archived:boolean)=>{const view=lifecycleDomain.setArchived(id,archived);if(archived)worktreeDomain.tidyOnArchive(id);return view},
+    setArchived:(id:string,archived:boolean)=>{const view=lifecycleDomain.setArchived(id,archived);if(archived&&!store.plans.candidateForTask(id))worktreeDomain.tidyOnArchive(id);return view},
     confirmWriterExited:lifecycleDomain.confirmWriterExited,
     cancel:lifecycleDomain.cancel,
     suspendForNetwork:lifecycleDomain.suspendForNetwork,
@@ -358,7 +361,10 @@ export function makeWorkbenchService(opts: Options) {
     reviewComment:review.reviewComment,
     sendReviewComments:review.sendReviewComments,
     revertReviewHunk:review.revertReviewHunk,
-    worktreeAction:worktreeDomain.worktreeAction,
+    worktreeAction:(id:string,action:Parameters<typeof worktreeDomain.worktreeAction>[1])=>action==='merge'
+      ? parallelDomain.choose(id,()=>worktreeDomain.worktreeAction(id,action),relayDomain.afterChoice)
+      : worktreeDomain.worktreeAction(id,action),
+    parallelChoiceTask:parallelDomain.choiceTask,
     rewindPreview:rewindDomain.rewindPreview,
     rewind:rewindDomain.rewind,
     undoRewind:rewindDomain.undoRewind,

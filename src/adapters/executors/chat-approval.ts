@@ -31,7 +31,8 @@ export function renderChatApprovalPrompt(provider: string, tool: string, input: 
         return clip(line, limit)
       }
       const legs = resolved?.legs ?? plan.legs
-      const single = legs.length === 1
+      const hasParallel = legs.some(leg=>!!(leg as {parallel?:unknown})?.parallel)
+      const single = legs.length === 1 && !hasParallel
       const briefLimit = Math.min(400, Math.floor(1300 / legs.length))
       const renderPlan = (field: typeof previewField, showPath: (path: string) => string) => {
         const workspace = resolved?.registrationPath
@@ -40,16 +41,17 @@ export function renderChatApprovalPrompt(provider: string, tool: string, input: 
         const start = resolved?.target.kind === 'project' && resolved.target.isolation === 'worktree'
           ? `\n独立工作区 · 起点：${field(resolved.target.base ?? '项目默认分支', 80)}` : ''
         const legBlocks = legs.map((leg, i) => {
-          const { executor, brief } = (leg ?? {}) as { executor?: unknown; brief?: unknown }
+          const { executor, brief, parallel } = (leg ?? {}) as { executor?: unknown; brief?: unknown; parallel?: string[] }
+          const names=Array.isArray(parallel)?`并行 ${parallel.length} 位 · ${parallel.map(id=>field(id,64)).join('、')}`:field(executor,64)
           const body = field(brief, briefLimit).replace(/\r\n|[\r\n\u2028\u2029]/g, '$&│ ')
-          return `第 ${i + 1} 棒 · ${field(executor, 64)}：\n│ ${body}`
+          return `第 ${i + 1} 棒 · ${names}：\n│ ${body}`
         })
         return [
           `${provider} · matter_plan [approval:${requestId}]`,
           `${single ? '确认交办' : '确认拆法'}：${field(plan.title, 120)}`,
           `工作区：${workspace}${start}`,
           ...legBlocks,
-          single ? '批准后开工。' : '批准后按此顺序接力；失败或提问就停。',
+          single ? '批准后开工。' : hasParallel ? '每位在独立工作区做一版。并行组做完后请你选一版，再接下一棒。' : '批准后按此顺序接力；失败或提问就停。',
         ].join('\n')
       }
       const wechatPrompt = renderPlan(previewField, path => {
@@ -185,7 +187,7 @@ export async function prepareChatApprovalPrompt(provider:string,tool:string,inpu
         const args=input as Record<string,unknown>
         delete args.project;delete args.isolation;delete args.base
         args.target=resolved.target
-        if(resolved.legs)args.legs=resolved.legs
+        if(resolved.legs)args.legs=resolved.legs.map(({executor,brief,parallel})=>parallel?{parallel,brief}:{executor,brief})
       }
     }catch(error){
       const code=error instanceof Error?error.message:'matter_plan_failed'

@@ -1,5 +1,6 @@
 import {afterEach,expect,it,vi} from 'vitest'
-import {mkdtempSync,mkdirSync,realpathSync,renameSync,symlinkSync} from 'node:fs'
+import {execFileSync} from 'node:child_process'
+import {existsSync,unlinkSync,writeFileSync,mkdtempSync,mkdirSync,realpathSync,renameSync,symlinkSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {randomUUID} from 'node:crypto'
@@ -912,4 +913,133 @@ it.each(['different','same'])('offers usable private selectors for places with t
  t.approve(selected)
  expect(await t.call(selected)).toMatchObject({status:202,body:{task:{path:roots[1]}}})
  expect(t.addProject).toHaveBeenCalledExactlyOnceWith({path:roots[1],name:'site',providerId:'claude'})
+})
+
+it.each([
+  {name:'two successes',failure:false,follow:false,ask:false},
+  {name:'an open question leaves the other candidate running',failure:false,follow:false,ask:true},
+  {name:'one failure',failure:true,follow:false,ask:false},
+  {name:'owner chooses the second workspace and relay continues',failure:false,follow:true,ask:false},
+])('parallel plan: $name',async({failure,follow,ask})=>{
+  const context={scope:'parallel-test'},caller={chatId:'owner',provider:'codex'}
+  const f=setup(false,true,{planConversation:()=>context})
+  const git=(cwd:string,...args:string[])=>execFileSync('git',['-c','user.email=test@example.invalid','-c','user.name=Test',...args],{cwd,stdio:'pipe'})
+  git(f.project,'init','-q','-b','main')
+  writeFileSync(join(f.project,'README.md'),'baseline\n')
+  git(f.project,'add','.');git(f.project,'commit','-qm','baseline')
+  f.service.addProject({path:f.project,providerId:'codex'})
+  const input={requestId:randomUUID(),project:f.service.projects()[0]!.id,title:'各做一版',legs:[
+    {parallel:['codex','claude'],brief:'做候选版本'},
+    ...(follow?[{executor:'openai',brief:'验证选中版本'}]:[]),
+  ]}
+  const tool='mcp__wechat__matter_plan'
+  const preview=structuredClone(input)
+  const card=await prepareChatApprovalPrompt('Codex',tool,preview,'parallel',{
+    resolveMatterPlan:args=>f.service.matterPlanPreview(args as typeof input,caller),
+  },'owner')
+  expect(card.prompt).toContain('第 1 棒 · 并行 2 位 · codex、claude')
+  await expect(f.service.matterPlan(preview,context)).rejects.toThrow('matter_parallel_requires_approval')
+  f.service.noteMatterApproval(tool,input,caller)
+  expect(f.service.matterApprovalStatus(tool,preview,caller)).toBe(true)
+  const {receipt}=await f.service.matterPlan(preview,context),id=receipt.matterId
+  expect((await f.service.matterPlan({...preview,requestId:randomUUID()},context)).receipt).toEqual(receipt)
+  await expect.poll(()=>f.calls.length).toBe(2)
+  const group=f.store.plans.candidates(id,1),claude=group.find(m=>m.executor==='claude')!,codex=group.find(m=>m.executor==='codex')!
+  const left=f.store.get(codex.taskId!),right=f.store.get(claude.taskId!)
+  expect(left.path).not.toEqual(right.path)
+  expect(f.matters.list({kind:'task'}).map(m=>m.id)).toEqual([id])
+  expect(f.service.list().tasks.map(t=>t.id)).toEqual([id])
+  expect(f.store.worktrees.get(left.id)?.start?.sha).toBe(f.store.worktrees.get(right.id)?.start?.sha)
+  expect(f.service.matterNote(`workbench/${left.id}`,'Codex 专属备注')).toEqual({ok:true})
+  expect(f.service.matterNote(`workbench/${right.id}`,'Claude 专属备注')).toEqual({ok:true})
+  expect(f.service.matterNotes(`workbench/${right.id}`,id).notes).toEqual(expect.arrayContaining([
+    expect.objectContaining({author:'codex',text:'Codex 专属备注'}),
+    expect.objectContaining({author:'claude',text:'Claude 专属备注'}),
+  ]))
+  expect(()=>f.service.matterNotes(`workbench/${right.id}`,'deadbeef')).toThrow('matter_scope_mismatch')
+  const leftIndex=f.calls.findIndex(c=>c.executor==='codex'),rightIndex=f.calls.findIndex(c=>c.executor==='claude')
+  writeFileSync(join(left.path,'codex.txt'),'left\n')
+  git(left.path,'add','.');git(left.path,'commit','-qm','Codex candidate')
+  const question=ask?f.calls[rightIndex]!.context.requestUserInput!({
+    questions:[{id:'choice',header:'确认',question:'选哪个文件名？',options:[],allowOther:true}],
+  }):undefined
+  await f.finish(leftIndex,'实际完成的验证：测试通过\n状态：做完',failure)
+  await expect.poll(()=>f.store.plans.candidates(id,1)[0]?.status).toBe(failure?'failed':'completed')
+  expect(f.notices).toEqual([])
+  await expect(f.service.worktreeAction(left.id,'merge')).rejects.toThrow('matter_parallel_not_ready')
+  expect(f.service.detail(id).parallelGroups?.[0]?.members[1]?.status).toBe(ask?'waiting':'running')
+  if(question){
+    const request=f.service.detail(right.id).questions[0]!
+    f.service.resolveAnswer(right.id,request.id,{choice:['claude.txt']})
+    await expect(question).resolves.toEqual({choice:['claude.txt']})
+  }
+  expect(f.service.matterNotes(`workbench/${right.id}`,id).notes.some(n=>n.text.includes(left.path))).toBe(false)
+  writeFileSync(join(right.path,'claude.txt'),'right\n')
+  git(right.path,'add','.');git(right.path,'commit','-qm','Claude candidate')
+  await f.finish(rightIndex,'实际完成的验证：2 项通过\n状态：做完')
+  await expect.poll(()=>f.notices.length).toBe(1)
+  for(const fragment of ['并行对照','codex.txt','claude.txt','+1 / −0 行','2 项通过','状态：做完',right.id]){
+    expect(f.notices[0]).toContain(fragment)
+  }
+  expect(existsSync(join(f.project,'claude.txt'))).toBe(false)
+  expect(f.calls).toHaveLength(2)
+  if(failure){
+    expect(await f.service.handleWechat('owner','用 Codex 那版')).toContain('已合进项目')
+    expect(existsSync(join(f.project,'codex.txt'))).toBe(true)
+    expect(existsSync(join(f.project,'claude.txt'))).toBe(false)
+  }
+  if(!follow)return
+  await expect(f.service.handleWechat('visitor','用 Claude 那版')).resolves.toBeNull()
+  const pending=join(right.path,'still-uncommitted.txt')
+  writeFileSync(pending,'owner edit\n')
+  expect(await f.service.handleWechat('owner','用 Claude 那版')).toContain('还有没提交的改动')
+  expect(f.store.plans.candidates(id,1).some(member=>member.chosen)).toBe(false)
+  expect(f.calls).toHaveLength(2)
+  unlinkSync(pending)
+  expect(await f.service.handleWechat('owner','用 Claude 那版')).toContain('已合进项目')
+  expect(existsSync(join(f.project,'claude.txt'))).toBe(true)
+  expect(existsSync(join(f.project,'codex.txt'))).toBe(false)
+  expect(existsSync(join(left.path,'codex.txt'))).toBe(true)
+  await expect.poll(()=>f.calls.length).toBe(3)
+  expect(f.calls[2]!.executor).toBe('openai')
+  expect(f.calls[2]!.context.workbenchTaskId).toBe(right.id)
+  expect(f.calls[2]!.text).toContain('Claude 专属备注')
+  expect(f.calls[2]!.text).toContain(right.path)
+  expect(f.calls[2]!.text).not.toContain(left.path)
+  await f.finish(2,'状态：做完')
+  await expect.poll(()=>f.store.plans.get(id)?.state).toBe('done')
+})
+
+it('a parallel leg after a sequential leg forks its committed work from the same snapshot',async()=>{
+  const context={scope:'parallel-after-single'},caller={chatId:'owner',provider:'codex'}
+  const f=setup(false,true,{planConversation:()=>context})
+  const git=(cwd:string,...args:string[])=>execFileSync('git',['-c','user.email=test@example.invalid','-c','user.name=Test',...args],{cwd,stdio:'pipe'})
+  git(f.project,'init','-q','-b','main')
+  git(f.project,'commit','--allow-empty','-qm','baseline')
+  f.service.addProject({path:f.project,providerId:'codex'})
+  const input={requestId:randomUUID(),project:f.service.projects()[0]!.id,title:'先准备，再并行',legs:[
+    {executor:'openai',brief:'准备公共文件'},{parallel:['codex','claude'],brief:'各做一个版本'},
+  ]}
+  f.service.matterPlanPreview(input,caller)
+  f.service.noteMatterApproval('mcp__wechat__matter_plan',input,caller)
+  const id=(await f.service.matterPlan(input,context)).receipt.matterId
+  await expect.poll(()=>f.calls.length).toBe(1)
+  const cwd=f.store.get(id).path
+  writeFileSync(join(cwd,'common.txt'),'public work\n')
+  await f.finish(0,'状态：做完')
+  await expect.poll(()=>f.store.plans.get(id)?.legs[1]?.stopReason).toBe('matter_blocked')
+  expect(f.calls).toHaveLength(1)
+  git(cwd,'add','.');git(cwd,'commit','-qm','public work')
+  f.service.continueTask(id,'继续')
+  await expect.poll(()=>f.calls.length).toBe(3)
+  const members=f.store.plans.candidates(id,2)
+  const inherited=git(cwd,'rev-parse','HEAD').toString().trim()
+  for(const member of members){
+    const task=f.store.get(member.taskId!)
+    expect(task.path).not.toBe(cwd)
+    expect(f.store.worktrees.get(task.id)?.start?.sha).toBe(inherited)
+    expect(existsSync(join(task.path,'common.txt'))).toBe(true)
+  }
+  for(let i=1;i<3;i++)await f.finish(i,'状态：做完')
+  await expect.poll(()=>f.notices.some(text=>text.includes('第 2 棒的并行对照'))).toBe(true)
 })

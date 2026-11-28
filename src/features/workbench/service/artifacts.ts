@@ -144,6 +144,22 @@ export function makeArtifactsDomain(ctx:ServiceCtx):ArtifactsDomain {
         if(!report)return
         const paths=[...new Set([...(running.ledgerArtifact?.files??[]),...report.files.map(f=>f.path)])]
         running.ledgerArtifact={files:paths,fileCount:paths.length,commit:report.headAfter}
+        if(running.ledgerRunId&&store.plans.candidateForTask(running.taskId)?.runId===running.ledgerRunId){
+          const changes=running.parallelChanges??new Map()
+          for(const file of report.files){
+            const previous=changes.get(file.path)
+            const lines=file.diff?.split('\n')
+            const hunk=lines?.findIndex(line=>line.startsWith('@@ '))??-1
+            const content=hunk===-1?null:lines!.slice(hunk)
+            const added=content?.filter(line=>line.startsWith('+')).length??null
+            const removed=content?.filter(line=>line.startsWith('-')).length??null
+            changes.set(file.path,{path:file.path,
+              added:added===null||previous?.added===null?null:(previous?.added??0)+added,
+              removed:removed===null||previous?.removed===null?null:(previous?.removed??0)+removed})
+          }
+          if(report.status!=='complete')running.parallelChangesPartial=true
+          if(report.status!=='unavailable')running.parallelChanges=changes
+        }
         // 起点单独也有用(回退「撤掉这一轮」只要它);终点打不成(超时 / 被取消)就只缺终点
         if(baseline.checkpoint)report.checkpointBefore=baseline.checkpoint
         if(after&&'skipped' in after)ctx.log?.('workbench',`checkpoint skipped task=${running.taskId} reason=${after.skipped}`)

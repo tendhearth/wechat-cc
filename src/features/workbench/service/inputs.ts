@@ -178,13 +178,13 @@ export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
         // 「投给 runtime 了」这件事本身就是新一轮开始的证据,回报去重键(reportOnce)
         // 靠它才不会因为快照从未被看见处于「忙碌」而永久锁死。
         running.turnSeq++
-        const plan=store.plans.get(id),baton=running.ledgerRunId??running.identity
+        const root=store.plans.root(id),plan=store.plans.get(root),baton=running.ledgerRunId??running.identity
         const stoppedLeg=plan?.state==='approved'?plan.legs.find(l=>l.runId===baton&&l.state==='stopped'):undefined
         if(stoppedLeg){
-          if(isRelayContinue(text)||stoppedLeg.stopReason==='leg_asked')store.plans.resume(id,baton);else store.plans.cancel(id)
+          if(isRelayContinue(text)||stoppedLeg.stopReason==='leg_asked')store.plans.resume(root,baton);else store.plans.cancel(root)
         }else if(plan?.state==='approved'&&plan.legs.some(l=>l.runId===baton&&l.state==='completed')&&!plan.legs.some(l=>l.state==='running'||l.state==='stopped')){
           // A new request to the retained, completed executor takes over the held plan.
-          store.plans.cancel(id)
+          store.plans.cancel(root)
         }
         store.ledger.running(running.ledgerRunId??running.identity)
         // Replay acknowledgement may wait behind an autonomous native turn.

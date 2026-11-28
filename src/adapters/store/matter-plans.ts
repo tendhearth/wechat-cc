@@ -1,9 +1,17 @@
+import type {CandidateResult,CandidateStatus} from '../../domain/matter-parallel'
 import type {Db} from '../../lib/db'
 import type {RelayLeg,RelayStop} from '../../domain/relay-decision'
 
 export interface PlanLeg extends RelayLeg {executor:string;brief:string;runId:string|null;stopReason:RelayStop|null}
 export interface MatterPlan {matterId:string;state:'approved'|'cancelled'|'done';approvedAt:number;createdAt:number;legs:PlanLeg[]}
-export type PlanBrief=Pick<PlanLeg,'executor'|'brief'>
+export type PlanBrief=Pick<PlanLeg,'executor'|'brief'>&{parallel?:readonly string[]}
+export interface PlanCandidate {
+  matterId:string;position:number;ordinal:number;executor:string;taskId:string|null;runId:string|null
+  status:CandidateStatus;result:CandidateResult|null;chosen:boolean
+}
+type CandidateRow=Omit<PlanCandidate,'result'|'chosen'>&{result:string|null;chosen:number}
+const CANDIDATE_COLUMNS='matter_id AS matterId,position,ordinal,executor,task_id AS taskId,run_id AS runId,status,result,chosen'
+const candidate=(row:CandidateRow):PlanCandidate=>({...row,result:row.result?JSON.parse(row.result):null,chosen:row.chosen===1})
 export const isRelayContinue=(text:string)=>/^继续(?:\s|[，,。.!！]|$)/.test(text.trim())
 
 export function makeMatterPlans(db:Db,now=()=>Date.now()){
@@ -11,14 +19,74 @@ export function makeMatterPlans(db:Db,now=()=>Date.now()){
     const plan=db.query<Omit<MatterPlan,'legs'>,[string]>('SELECT matter_id AS matterId,state,approved_at AS approvedAt,created_at AS createdAt FROM matter_plans WHERE matter_id=?').get(id)
     return plan?{...plan,legs:db.query<PlanLeg,[string]>('SELECT position,executor,brief,state,run_id AS runId,auto_dispatches AS autoDispatches,stop_reason AS stopReason FROM matter_plan_legs WHERE matter_id=? ORDER BY position').all(id)}:null
   }
+  const candidates=(id:string,position?:number)=>db.query<CandidateRow,[string,number|null,number|null]>(
+    `SELECT ${CANDIDATE_COLUMNS} FROM matter_plan_candidates WHERE matter_id=? AND (? IS NULL OR position=?) ORDER BY position,ordinal`,
+  ).all(id,position??null,position??null).map(candidate)
+  function candidateForTask(id:string):PlanCandidate|null{
+    const row=db.query<CandidateRow,[string]>(`SELECT ${CANDIDATE_COLUMNS} FROM matter_plan_candidates WHERE task_id=?`).get(id)
+    return row?candidate(row):null
+  }
+  const root=(id:string)=>candidateForTask(id)?.matterId??id
+  const activeTask=(id:string,before=Infinity)=>candidates(id).filter(c=>c.position<before&&c.chosen).at(-1)?.taskId??id
   function cancel(id:string):boolean{return db.query("UPDATE matter_plans SET state='cancelled' WHERE matter_id=? AND state='approved'").run(id).changes>0}
   return {
-    get,cancel,
-    approve(id:string,legs:readonly PlanBrief[],firstRun:string){
-      if(legs.length<2||legs.length>6)throw Error('invalid_matter_plan')
+    markComparison(id:string,position:number){
+      return db.query('UPDATE matter_plan_candidates SET compared=1 WHERE matter_id=? AND position=? AND ordinal=1 AND compared=0').run(id,position).changes===1
+    },
+    pendingChoices(owner:string){
+      return db.query<{matterId:string;position:number},[string]>(`SELECT l.matter_id AS matterId,l.position FROM matter_plan_legs l
+        JOIN matter_plans p ON p.matter_id=l.matter_id
+        JOIN workbench_tasks t ON t.id=l.matter_id
+        WHERE p.state='approved' AND l.state='running' AND t.owner_chat_id=? AND t.archived_at IS NULL
+        AND EXISTS(SELECT 1 FROM matter_plan_candidates c WHERE c.matter_id=l.matter_id AND c.position=l.position)`).all(owner)
+    },
+    get,cancel,candidates,candidateForTask,root,activeTask,
+    groups(id:string){
+      const all=candidates(root(id))
+      return [...new Set(all.map(c=>c.position))].map(position=>({position,
+        members:all.filter(c=>c.position===position).map(({executor,taskId,status,chosen})=>({executor,taskId,status,chosen})),
+      }))
+    },
+    bindCandidate(id:string,position:number,ordinal:number,taskId:string,runId:string){
+      const changed=db.query("UPDATE matter_plan_candidates SET task_id=?,run_id=? WHERE matter_id=? AND position=? AND ordinal=? AND status='queued' AND task_id IS NULL").run(taskId,runId,id,position,ordinal)
+      if(changed.changes!==1)throw Error('matter_plan_stale')
+    },
+    progressCandidate(runId:string,status:'running'|'waiting'){
+      db.query("UPDATE matter_plan_candidates SET status=? WHERE run_id=? AND status IN ('queued','running','waiting')").run(status,runId)
+    },
+    settleCandidate(id:string,position:number,ordinal:number,status:CandidateStatus,result:CandidateResult|null){
+      return db.query("UPDATE matter_plan_candidates SET status=?,result=? WHERE matter_id=? AND position=? AND ordinal=? AND status IN ('queued','running','waiting')").run(status,result?JSON.stringify(result):null,id,position,ordinal).changes===1
+    },
+    openGroup(id:string,from:number|null,to:number,ownerResume:boolean){
+      db.transaction(()=>{
+        const plan=get(id),current=plan?.legs.find(l=>l.position===from)
+        const allowed=ownerResume?current?.state==='completed':current?.state==='running'
+        if(plan?.state!=='approved'||!allowed||plan.legs.find(l=>l.state==='pending')?.position!==to)throw Error('matter_plan_stale')
+        db.query("UPDATE matter_plan_legs SET state='completed',stop_reason=NULL WHERE matter_id=? AND position=?").run(id,from)
+        db.query("UPDATE matter_plan_legs SET state='running',auto_dispatches=auto_dispatches+?,stop_reason=NULL WHERE matter_id=? AND position=?").run(ownerResume?0:1,id,to)
+      })()
+    },
+    choose(id:string,position:number,ordinal:number){
+      db.transaction(()=>{
+        const plan=get(id)
+        if(plan?.state!=='approved'||plan.legs.find(l=>l.position===position)?.state!=='running')throw Error('matter_parallel_not_ready')
+        const changed=db.query("UPDATE matter_plan_candidates SET chosen=1 WHERE matter_id=? AND position=? AND ordinal=? AND task_id IS NOT NULL AND status IN ('completed','failed','cancelled','interrupted')").run(id,position,ordinal)
+        if(changed.changes!==1)throw Error('matter_parallel_not_ready')
+        db.query("UPDATE matter_plan_legs SET state='completed' WHERE matter_id=? AND position=?").run(id,position)
+        if(!plan.legs.some(l=>l.position>position))db.query("UPDATE matter_plans SET state='done' WHERE matter_id=?").run(id)
+      })()
+    },
+    approve(id:string,legs:readonly PlanBrief[],firstRun:string,firstExecutor=legs[0]?.executor){
+      if(!legs.length||legs.length>6||legs.length===1&&!legs[0]?.parallel)throw Error('invalid_matter_plan')
       db.transaction(()=>{
         const at=now();db.query("INSERT INTO matter_plans VALUES(?,'approved',?,?)").run(id,at,at)
-        for(const [index,leg]of legs.entries())db.query('INSERT INTO matter_plan_legs VALUES(?,?,?,?,?,?,0,NULL)').run(id,index+1,leg.executor,leg.brief,index===0?'running':'pending',index===0?firstRun:null)
+        for(const [index,leg]of legs.entries()){
+          db.query('INSERT INTO matter_plan_legs VALUES(?,?,?,?,?,?,0,NULL)').run(id,index+1,leg.executor,leg.brief,index===0?'running':'pending',index===0&&!leg.parallel?firstRun:null)
+          for(const [member,executor]of (leg.parallel??[]).entries()){
+            const first=index===0&&executor===firstExecutor
+            db.query("INSERT INTO matter_plan_candidates(matter_id,position,ordinal,executor,task_id,run_id,status) VALUES(?,?,?,?,?,?,'queued')").run(id,index+1,member+1,executor,first?id:null,first?firstRun:null)
+          }
+        }
       })()
     },
     stop(id:string,position:number,reason:RelayStop){db.query("UPDATE matter_plan_legs SET state='stopped',stop_reason=? WHERE matter_id=? AND position=? AND state='running' AND EXISTS(SELECT 1 FROM matter_plans WHERE matter_id=? AND state='approved')").run(reason,id,position,id)},
@@ -52,6 +120,9 @@ export function makeMatterPlans(db:Db,now=()=>Date.now()){
       }else if(plan.legs.some(l=>l.state!=='completed'))throw Error('matter_plan_stale')
       db.query("UPDATE matter_plans SET state='done' WHERE matter_id=?").run(id)
     })()},
-    recover(){return db.query("UPDATE matter_plan_legs SET state='stopped',stop_reason='leg_interrupted' WHERE state='running' AND matter_id IN (SELECT matter_id FROM matter_plans WHERE state='approved')").run()},
+    recover(){
+      db.query("UPDATE matter_plan_candidates AS c SET status='interrupted' WHERE status IN ('queued','running','waiting') AND EXISTS(SELECT 1 FROM matter_plan_legs l WHERE l.matter_id=c.matter_id AND l.position=c.position AND l.state='running')").run()
+      return db.query("UPDATE matter_plan_legs AS l SET state='stopped',stop_reason='leg_interrupted' WHERE state='running' AND matter_id IN (SELECT matter_id FROM matter_plans WHERE state='approved') AND NOT EXISTS(SELECT 1 FROM matter_plan_candidates c WHERE c.matter_id=l.matter_id AND c.position=l.position)").run()
+    },
   }
 }

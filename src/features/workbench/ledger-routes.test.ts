@@ -3,7 +3,7 @@ import {ledgerRoutes} from './ledger-routes'
 import {scopeMatterLedger} from '../../lib/matter-ledger-access'
 import type {WorkbenchService} from './service'
 
-const secret={agentRuns:[{brief:'LEDGER_PLAN_CANARY'}],notes:[{text:'LEDGER_NOTE_CANARY'}],notesTotal:73}
+const secret={parallelGroups:[{members:[{taskId:'PRIVATE_VERSION_CANARY'}]}],agentRuns:[{brief:'LEDGER_PLAN_CANARY'}],notes:[{text:'LEDGER_NOTE_CANARY'}],notesTotal:73}
 const owner={tier:'admin',origin:'session',chatId:'owner'} as const
 const operator={tier:'admin',origin:'operator'} as const
 it('notebook sources are owner/operator/device only; other admins, visitors and A2A get neither records nor metadata',async()=>{
