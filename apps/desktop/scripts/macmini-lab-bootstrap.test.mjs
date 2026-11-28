@@ -55,7 +55,7 @@ test('bundles deterministic, unmodified bytes for the executor and test harness'
   expect([...files.keys()]).toEqual([
     'cc-alive-shots.spec.ts', 'design-unify-shots.spec.ts', 'macmini-app-snapshot.mjs',
     'macmini-browser-snapshot.mjs', 'macmini-embedded-ui.mjs', 'macmini-job-lifecycle.mjs',
-    'macmini-lab-executor.mjs', 'macmini-machine-lock.mjs', 'macmini-snapshot-retention.mjs',
+    'macmini-lab-executor.mjs', 'macmini-lab-health.mjs', 'macmini-machine-lock.mjs', 'macmini-snapshot-retention.mjs',
     'macmini-source-manifest.mjs', 'macmini-ui-app.mjs', 'macmini-ui-protocol.mjs', 'macmini-ui-remote.mjs',
     'playwright.config.ts', 'roster-fixture.ts', 'task-detail-minimal.spec.ts',
   ])
