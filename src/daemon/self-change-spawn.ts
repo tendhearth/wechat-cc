@@ -66,7 +66,7 @@ const RESOLVE_REASON: Record<'self_cli_not_found' | 'bun_not_found', string> = {
 
 export interface SelfChangeSpawner {
   start(request: string): { ok: true; pid: number } | { ok: false; reason: string }
-  autoship(): ReturnType<SelfChangeSpawner['start']>
+  autoship(bootAt: string): ReturnType<SelfChangeSpawner['start']> & { alive?: () => boolean }
   list(): SelfChangeRow[]
 }
 
@@ -87,7 +87,7 @@ export function makeSelfChangeSpawner(deps: {
   }
   const dir = join(deps.stateDir, 'self-change')
 
-  function start(args: string[], kind: 'self-change' | 'autoship', text?: string): ReturnType<SelfChangeSpawner['start']> {
+  function start(args: string[], kind: 'self-change' | 'autoship', text?: string, bootAt?: string): ReturnType<SelfChangeSpawner['autoship']> {
     const resolved = deps.resolve()
     if ('error' in resolved) {
       deps.log(`${kind} start refused: ${resolved.error}`)
@@ -98,7 +98,11 @@ export function makeSelfChangeSpawner(deps: {
     delete env.CLAUDECODE
     delete env.CLAUDE_CODE_ENTRYPOINT
     // 自动轮只用 daemon 已经选定的状态目录；仍不继承凭据。
-    if (kind === 'autoship') env.WECHAT_STATE_DIR = deps.stateDir
+    if (kind === 'autoship') {
+      env.WECHAT_STATE_DIR = deps.stateDir
+      env.WECHAT_CC_AUTOSHIP_DAEMON_PID = String(process.pid)
+      env.WECHAT_CC_AUTOSHIP_DAEMON_BOOT = bootAt
+    }
 
     try {
       const child = deps.spawn(resolved.cmd, [...resolved.args, ...args], {
@@ -108,14 +112,16 @@ export function makeSelfChangeSpawner(deps: {
         windowsHide: true,
         env,
       })
-      child.once('error', err => deps.log(`${kind} child error: ${err.message}`))
+      let alive = true
+      child.once('error', err => { alive = false; deps.log(`${kind} child error: ${err.message}`) })
+      if (kind === 'autoship') child.once('exit', () => { alive = false })
       if (typeof child.pid !== 'number') {
         deps.log(`${kind} start failed: no pid`)
         return { ok: false, reason: '子进程没起来(没拿到 pid)' }
       }
       child.unref()
       deps.log(`${kind} started pid=${child.pid}${text ? ` request="${text.slice(0, 60)}"` : ''}`)
-      return { ok: true, pid: child.pid }
+      return { ok: true, pid: child.pid, ...(kind === 'autoship' ? { alive: () => alive } : {}) }
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err)
       deps.log(`${kind} start threw: ${detail}`)
@@ -131,8 +137,8 @@ export function makeSelfChangeSpawner(deps: {
       return start(['self', 'change', '--from', 'wechat', '--json', '--', text], 'self-change', text)
     },
 
-    autoship() {
-      return start(['self', 'autoship'], 'autoship')
+    autoship(bootAt) {
+      return start(['self', 'autoship'], 'autoship', undefined, bootAt)
     },
 
     list() {

@@ -1,8 +1,12 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
-import { autoshipStore, parseInstalledVersion } from './self-autoship-runtime'
+import { describe, expect, it, vi } from 'vitest'
+import { autoshipStore, defaultAutoshipDeps, matchesLaunchAgent, parseInstalledVersion, parseLoadedLaunchAgent, refreshAutoshipDev } from './self-autoship-runtime'
+
+import { makeGit, nodeGitSpawnSync } from './self-change/git'
+import { loadAgentConfig, saveAgentConfig } from '../lib/agent-config'
+import { AutoshipPreparationError } from './self-autoship'
 
 const sha = 'b'.repeat(40)
 
@@ -17,11 +21,12 @@ describe('autoship persistence', () => {
       const round = { sha, at: '2026-11-27T00:00:00.000Z', exitCode: 1, message: '阶段失败\n已回滚' }
       store.saveState(halt)
       store.saveRound(round)
-      store.saveRound({ ...round, exitCode: 2, message: '持锁\n跳过' })
+      store.saveSkip({ ...round, exitCode: 2, message: '持锁\n跳过' })
       const reopened = autoshipStore(dir)
       expect(reopened.loadState()).toEqual(halt)
-      expect(reopened.lastRound()).toEqual({ ...round, exitCode: 2, message: '持锁\n跳过' })
-      for (const name of ['autoship.json', 'autoship-state.json']) {
+      expect(reopened.lastRound()).toEqual(round)
+      expect(reopened.lastSkip()).toEqual({ ...round, exitCode: 2, message: '持锁\n跳过' })
+      for (const name of ['autoship.json', 'autoship-skip.json', 'autoship-state.json']) {
         const path = join(dir, 'self-change', name)
         if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600)
         expect(readFileSync(path, 'utf8').split('\n')).toHaveLength(2)
@@ -36,4 +41,88 @@ describe('autoship persistence', () => {
     expect(parseInstalledVersion('1.8.12 (832d27d03)\n')).toEqual({ version: '1.8.12 (832d27d03)', sha: '832d27d03' })
     expect(parseInstalledVersion('1.8.12')).toEqual({ version: '1.8.12', sha: null })
   })
+})
+
+it('journal survives reopening and describes target, previous version, backup and start time', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cc-autoship-journal-'))
+  try {
+    const transaction = { sha, previousVersion: '1.2.3 (1234567)', backupPath: '/app/cli.prev', startedAt: '2026-11-27T00:00:00.000Z' }
+    autoshipStore(dir).saveTransaction(transaction)
+    const reopened = autoshipStore(dir)
+    for (const value of Object.values(transaction)) expect(reopened.pendingTransaction()).toContain(value)
+    const path = join(dir, 'self-change', 'autoship-transaction.json')
+    if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600)
+    writeFileSync(path, '{bad')
+    expect(reopened.pendingTransaction()).toContain('无法读取')
+    reopened.clearTransaction()
+    expect(reopened.pendingTransaction()).toBeNull()
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+it('requires the initiating daemon to be the compiled sidecar of the loaded LaunchAgent', () => {
+  const daemon = { pid: 73, parentPid: 31, bootAt: 'current-boot', compiled: true, execPath: '/app/cli', stateDir: '/state', idle: true, guarded: true }
+  const expected = { pid: 73, bootAt: 'current-boot', stateDir: '/state', sidecar: '/app/cli', program: '/app/main', plistPath: '/launch/cc.plist', supervisedByApp: true }
+  const job = { pid: 31, program: '/app/main', path: '/launch/cc.plist' }
+  const match = (a: string, b: string) => a === b
+  expect(matchesLaunchAgent(daemon, expected, job, match)).toBe(true)
+  for (const mutation of [{ pid: 74 }, { parentPid: 32 }, { bootAt: 'previous-boot' }, { compiled: false }, { execPath: '/other/cli' }, { stateDir: '/other' }]) {
+    expect(matchesLaunchAgent({ ...daemon, ...mutation }, expected, job, match)).toBe(false)
+  }
+  expect(matchesLaunchAgent(daemon, expected, { ...job, program: '/other/main' }, match)).toBe(false)
+  expect(matchesLaunchAgent(daemon, expected, { ...job, path: '/other/cc.plist' }, match)).toBe(false)
+  expect(matchesLaunchAgent(daemon, { ...expected, program: daemon.execPath, supervisedByApp: false }, { ...job, pid: daemon.pid, program: daemon.execPath }, match)).toBe(true)
+})
+
+it('refreshes the remote ref with a deadline and never trusts a stale ref on network failure', () => {
+  const git = { run: vi.fn().mockReturnValueOnce({ code: 1, stderr: 'timeout', stdout: '' }) }
+  expect(refreshAutoshipDev(git, 25_000)).toBeNull()
+  expect(git.run).toHaveBeenCalledExactlyOnceWith(['fetch', 'origin', '+refs/heads/dev:refs/remotes/origin/dev'], { timeoutMs: 25_000 })
+  const newer = 'c'.repeat(40)
+  git.run.mockReturnValueOnce({ code: 0 }).mockReturnValueOnce({ code: 0, stdout: newer })
+  expect(refreshAutoshipDev(git, 25_000)).toBe(newer)
+})
+
+it('reads only the loaded service attributes from launchctl output', () => {
+  const output = [
+    'gui/501/com.wechat-cc.daemon = {',
+    '\tpath = /home/cc/Library/LaunchAgents/com.wechat-cc.daemon.plist',
+    '\tprogram = /Applications/CC Example.app/Contents/MacOS/CC Example',
+    '\tproperties = {',
+    '\t\tpid = 9999',
+    '\t}',
+    '\tpid = 310',
+    '}',
+  ].join('\n')
+  expect(parseLoadedLaunchAgent(output)).toEqual({
+    pid: 310,
+    path: '/home/cc/Library/LaunchAgents/com.wechat-cc.daemon.plist',
+    program: '/Applications/CC Example.app/Contents/MacOS/CC Example',
+  })
+})
+
+it('initializes an isolated hub, retries a missing remote quietly, and rejects a mismatched origin', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cc-autoship-repo-'))
+  try {
+    const workdir = join(dir, 'work')
+    const remote = join(dir, 'remote')
+    const stateDir = join(dir, 'state')
+    mkdirSync(stateDir)
+    saveAgentConfig(stateDir, { ...loadAgentConfig(stateDir), self_change: { workdir, repo_url: remote } })
+    const deps = defaultAutoshipDeps(stateDir, null)
+    const repo = deps.repo(remote)
+    expect(repo.fetchDev()).toBeNull()
+
+    mkdirSync(remote)
+    const git = makeGit(nodeGitSpawnSync, remote)
+    function run(args: string[]) {
+      const result = git.run(args)
+      if (result.code !== 0) throw new Error(result.stderr)
+      return result.stdout.trim()
+    }
+    run(['init', '-q'])
+    run(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '--allow-empty', '-qm', 'fixture dev'])
+    run(['update-ref', 'refs/heads/dev', 'HEAD'])
+    expect(repo.fetchDev()).toBe(run(['rev-parse', 'HEAD']))
+    expect(() => deps.repo(join(dir, 'other')).fetchDev()).toThrow(AutoshipPreparationError)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
 })

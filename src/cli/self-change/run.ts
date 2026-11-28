@@ -209,27 +209,51 @@ export async function runSelfChange(
     return null
   }
 
-  while (s.step !== 'done') {
-    save()
-    const step = steps[s.step]
-    let outcome
-    try {
-      outcome = await step(s, deps)
-    } catch (err) {
-      // 步骤自己没接住的异常(假件说谎、磁盘满、bug)。当失败记,原文留在 state 里。
-      const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}`.trim() : String(err)
-      return await finish('crashed', message)
-    }
+  let deployment: { release(): void } | undefined
+  try {
+    while (s.step !== 'done') {
+      if (!deployment && (s.step === 'deploy' || s.step === 'selftest') && deps.lockDeployment) {
+        const held = deps.lockDeployment()
+        if ('heldBy' in held) return await finish('deploy_tasks_blocked', `另一条部署持锁（PID ${held.heldBy}）。`)
+        deployment = held
+        if (s.step === 'selftest') {
+          s.step = 'deploy'
+          return await finish('deploy_tasks_blocked', '上次部署未在同一事务内完成自检。请先核对日用安装与 .prev，再恢复这条自改。')
+        }
+      }
+      save()
+      const step = steps[s.step]
+      let outcome
+      try {
+        outcome = await step(s, deps)
+      } catch (err) {
+        // 步骤自己没接住的异常(假件说谎、磁盘满、bug)。当失败记,原文留在 state 里。
+        const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}`.trim() : String(err)
+        return await finish('crashed', message)
+      }
 
-    if (!outcome.ok && outcome.fixRound) {
-      const ended = await fixRound(outcome.fixRound, outcome.fixPrompt ?? '', outcome.detail ?? '')
-      if (ended) return ended
-      continue
-    }
-    if (!outcome.ok) return await finish(outcome.fail ?? 'unknown_failure', outcome.detail ?? '')
+      if (!outcome.ok && outcome.fixRound) {
+        const ended = await fixRound(outcome.fixRound, outcome.fixPrompt ?? '', outcome.detail ?? '')
+        if (ended) return ended
+        continue
+      }
+      if (!outcome.ok) {
+        if (deployment && s.merge.sha && HALTABLE.includes(outcome.fail ?? '')) {
+          try { deps.recordDeployFailure?.(s.merge.sha, step === steps.selftest ? 'selftest' : 'deploy') }
+          catch (err) { deps.log(`[self-change] 无法记录失败 tree：${String(err)}`) }
+        }
+        return await finish(outcome.fail ?? 'unknown_failure', outcome.detail ?? '')
+      }
 
-    s.step = outcome.next ?? 'done'
-    save()
+      s.step = outcome.next ?? 'done'
+      save()
+      if (s.step === 'report') {
+        deployment?.release()
+        deployment = undefined
+      }
+    }
+  } finally {
+    deployment?.release()
   }
 
   s.result = 'done'

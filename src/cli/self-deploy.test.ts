@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, uti
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
+  acquireDeploymentLock,
   defaultSelfDeployDeps,
   detectDeveloperIdIdentity,
   executeSelfDeploy,
@@ -495,7 +496,7 @@ function harness(): Harness {
 }
 
 describe('executeSelfDeploy', () => {
-  it('rechecks an automatic target after waiting for tasks and before touching binaries', async () => {
+  it('rechecks an automatic target after waiting for tasks and before changing live binaries', async () => {
     const h = harness()
     const order: string[] = []
     h.deps.taskGate = async () => { order.push('tasks'); return null }
@@ -1167,5 +1168,58 @@ describe('executeSelfDeploy — polling', () => {
     const result = await executeSelfDeploy(h.plan, h.deps)
     expect(result.ok).toBe(true)
     expect(result.steps.find((s) => s.name === 'polling')).toBeUndefined()
+  })
+})
+
+describe('deployment transaction', () => {
+  it('keeps the service lock across deployment, caller selftests and rollback', async () => {
+    const h = harness()
+    const input = {
+      platform: 'darwin' as const, arch: 'arm64', uid: 501, homeDir: h.dir,
+      repoRoot: h.dir, app: '/example.app', plistXml: null, stateDir: join(h.dir, 'state'),
+    }
+    const target = planSelfDeploy(input)
+    expect(planSelfDeploy({ ...input, app: '/other.app', stateDir: join(h.dir, 'different') }).lockPath).toBe(target.lockPath)
+    h.plan.lockPath = target.lockPath
+    const held = acquireDeploymentLock(h.dir)
+    if ('heldBy' in held) throw new Error('fixture unexpectedly busy')
+    try {
+      expect((await executeSelfDeploy(h.plan, h.deps, held)).ok).toBe(true)
+      expect(acquireDeploymentLock(h.dir)).toEqual({ heldBy: process.pid })
+      expect((await executeSelfDeploy(h.plan, h.deps)).steps[0]).toMatchObject({ name: 'lock', ok: false })
+      const rollback = { ...h.plan, newBinaryPath: h.plan.prevPath, rollback: false }
+      expect((await executeSelfDeploy(rollback, h.deps, held)).ok).toBe(true)
+      expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+    } finally { held.release() }
+    expect(existsSync(target.lockPath!)).toBe(false)
+  })
+
+  it('journals before staging and runs the final gate after signing, with live binary and backup untouched on refusal', async () => {
+    const h = harness()
+    writeFileSync(h.plan.prevPath, 'EARLIER_BINARY')
+    h.enableSigning()
+    const stages: string[] = []
+    h.deps.beforeStage = plan => {
+      expect(plan.prevPath).toBe(h.plan.prevPath)
+      expect(existsSync(plan.tmpPath)).toBe(false)
+      stages.push('journal')
+    }
+    h.deps.confirmTarget = async (plan, previous) => {
+      expect(existsSync(plan.tmpPath)).toBe(true)
+      expect(previous).toContain('9.9.8-old')
+      expect(readFileSync(plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+      expect(readFileSync(plan.prevPath, 'utf8')).toBe('EARLIER_BINARY')
+      stages.push('final')
+      return '远端 dev 已变化'
+    }
+    const result = await executeSelfDeploy(h.plan, h.deps)
+    expect(result).toMatchObject({ ok: false, blocked: 'target' })
+    expect(result.steps.at(-1)?.detail).toBe('远端 dev 已变化')
+    expect(result.steps.find(s => s.name === 'sign')).toMatchObject({ ok: true })
+    expect(stages).toEqual(['journal', 'final'])
+    expect(existsSync(h.plan.tmpPath)).toBe(false)
+    expect(h.kickstartCalls).toBe(0)
+    expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+    expect(readFileSync(h.plan.prevPath, 'utf8')).toBe('EARLIER_BINARY')
   })
 })

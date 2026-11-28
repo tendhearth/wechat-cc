@@ -20,6 +20,17 @@ export type SelfChangeDecision = 'pending' | 'allow' | 'deny' | 'timeout' | 'und
 
 const DECISIONS: readonly string[] = ['pending', 'allow', 'deny', 'timeout', 'undelivered', 'unknown']
 
+export interface DeployReadiness {
+  pid: number
+  parentPid: number
+  bootAt: string
+  compiled: boolean
+  execPath: string
+  stateDir: string
+  idle: boolean
+  guarded: boolean
+}
+
 export interface DaemonClient {
   /** 报一句进展。false = 主人没收到(没配 chat / 推送窗口关着 / daemon 没起)。 */
   notice(text: string): Promise<boolean>
@@ -47,7 +58,7 @@ export interface DaemonClient {
 /** 单次请求的上限。拍板本身的等待是轮询出来的,不靠一条长连接吊着。 */
 const DEFAULT_TIMEOUT_MS = 15_000
 
-export function makeDaemonClient(deps: { readApiInfo: () => ApiInfo | null; fetch: typeof fetch; timeoutMs?: number }): DaemonClient {
+export function makeDaemonClient(deps: { readApiInfo: () => ApiInfo | null; fetch: typeof fetch; timeoutMs?: number }) {
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
 
   async function call(
@@ -108,6 +119,22 @@ export function makeDaemonClient(deps: { readApiInfo: () => ApiInfo | null; fetc
       // file token:operator token 根本够不着 /v1/health(见 self-deploy 的健康门)。
       const r = await call('/v1/health', { method: 'GET', token: 'file' })
       return !!r?.ok
+    },
+
+    async deployReadiness(): Promise<DeployReadiness | null> {
+      const r = await call('/v1/health?check=deploy', { method: 'GET', token: 'file' })
+      if (!r?.ok) return null
+      const body = r.body as { daemon_pid?: unknown; deploy?: Partial<DeployReadiness>; guard?: { enabled?: unknown; safe?: unknown; paused?: unknown } } | null
+      const d = body?.deploy
+      const g = body?.guard
+      if (typeof body?.daemon_pid !== 'number' || typeof d?.parentPid !== 'number'
+        || typeof d.compiled !== 'boolean' || typeof d.execPath !== 'string'
+        || typeof d.stateDir !== 'string' || typeof d.idle !== 'boolean' || typeof d.bootAt !== 'string') return null
+      return {
+        pid: body.daemon_pid, parentPid: d.parentPid, bootAt: d.bootAt, compiled: d.compiled, execPath: d.execPath,
+        stateDir: d.stateDir, idle: d.idle,
+        guarded: typeof g?.enabled === 'boolean' && typeof g.safe === 'boolean' && (!g.enabled || (g.safe && g.paused !== true)),
+      }
     },
 
     async guard() {

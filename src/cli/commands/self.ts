@@ -40,7 +40,7 @@ const selfDeployCmd = defineCommand({
       return
     }
 
-    const { planSelfDeploy, executeSelfDeploy, defaultSelfDeployDeps, resolveSigningInputs, pluginSourceCandidates } = await import('../self-deploy.ts')
+    const { acquireDeploymentLock, planSelfDeploy, executeSelfDeploy, defaultSelfDeployDeps, resolveSigningInputs, pluginSourceCandidates } = await import('../self-deploy.ts')
     const { homedir } = await import('node:os')
     const { existsSync, readFileSync } = await import('node:fs')
 
@@ -55,81 +55,94 @@ const selfDeployCmd = defineCommand({
 
     const repoRoot = compiledRepoRoot() ?? SOURCE_REPO_ROOT
     const homeDir = homedir()
-    const plistPath = join(homeDir, 'Library', 'LaunchAgents', 'com.wechat-cc.daemon.plist')
-    const plistXml = existsSync(plistPath) ? readFileSync(plistPath, 'utf8') : null
-    const uid = typeof process.getuid === 'function' ? process.getuid() : 501
-    const healthTimeout = parseTimeoutMsFlag(args['health-timeout-ms'])
-    if (!healthTimeout.ok) {
-      const message = `--health-timeout-ms ${healthTimeout.error}`
-      if (json) console.log(JSON.stringify({ ok: false, exitCode: 1, error: 'invalid_health_timeout_ms', message }, null, 2))
-      else console.error(`self deploy: ${message}`)
-      process.exit(1)
+    const held = acquireDeploymentLock(homeDir)
+    if ('heldBy' in held) {
+      const detail = `another self deploy is running (pid ${held.heldBy})`
+      if (json) console.log(JSON.stringify({ ok: false, exitCode: 1, steps: [{ name: 'lock', ok: false, detail }] }))
+      else console.error(detail)
+      process.exitCode = 1
       return
     }
 
-    // 签名:本机钥匙串里有 Developer ID 就用它重签(见 self-deploy.ts 文件头);
-    // `--no-sign` 关掉。citty/mri 对 `--no-sign` 的处理与 `--no-rollback` 同一套
-    // (boolean 取反落到 `sign:false`),两种拼法都认。
-    const deps = defaultSelfDeployDeps({ waitTasks: Boolean(args['wait-tasks']), force: Boolean(args.force) })
-    const noSign = (args as Record<string, unknown>)['no-sign'] === true || (args as Record<string, unknown>).sign === false
-    const signing = resolveSigningInputs({ repoRoot, disabled: noSign, binaryPath: args.binary ?? null, spawnSync: deps.spawnSync, exists: existsSync })
-
-    let plan
     try {
-      plan = planSelfDeploy({
-        platform: process.platform,
-        arch: process.arch,
-        homeDir,
-        uid,
-        repoRoot,
-        stateDir: STATE_DIR,
-        plistXml,
-        binary: args.binary,
-        app: args.app,
-        healthTimeoutMs: healthTimeout.value,
-        // citty/mri turns `--no-rollback` into `rollback:false` (boolean
-        // negation) — the declared `'no-rollback'` key stays undefined, so
-        // reading only that key silently ignored the flag and deployed with
-        // rollback still armed. Accept both spellings.
-        rollback: !((args as Record<string, unknown>)['no-rollback'] === true || (args as Record<string, unknown>).rollback === false),
-        ...signing,
-        // 插件来源登记(2026-09-30):只在源码模式下有 checkout 可登记;打包版保留已有指针。
-        pluginSourceCandidates: compiled ? [] : pluginSourceCandidates(repoRoot, deps.spawnSync),
-        allowMissingPlugins: (args as Record<string, unknown>)['allow-missing-plugins'] === true || (args as Record<string, unknown>).allowMissingPlugins === true,
-        allowUnsigned: (args as Record<string, unknown>)['allow-unsigned'] === true || (args as Record<string, unknown>).allowUnsigned === true,
-        exists: existsSync,
-      })
-    } catch (err) {
-      const error = err instanceof Error ? err.message : String(err)
-      // planSelfDeploy() can itself throw self_deploy_unsupported_platform
-      // (defense in depth — the process.platform check above already
-      // short-circuits the normal path) — keep both paths agreeing on exit 2.
-      const exitCode = error === 'self_deploy_unsupported_platform' ? 2 : 1
-      const message = error === 'launchagent_not_app_bundle'
-        ? 'installed LaunchAgent does not point at an app bundle (looks like a dev-mode/source-checkout plist) — pass --app <path-to-.app> (e.g. "/Applications/Tendhearth CC.app") to target it explicitly'
-        : error === 'launchagent_stale'
-          ? 'installed LaunchAgent points at an app binary that no longer exists (the app was updated/renamed/moved) — open the app once (it repairs the LaunchAgent) or run `<app>/Contents/MacOS/tendhearth-cc-cli service repair`, then retry; or pass --app'
-          : error
-      if (json) console.log(JSON.stringify({ ok: false, exitCode, error, message }, null, 2))
-      else console.error(`self deploy: ${message}`)
-      process.exit(exitCode)
-      return
-    }
+      const plistPath = join(homeDir, 'Library', 'LaunchAgents', 'com.wechat-cc.daemon.plist')
+      const plistXml = existsSync(plistPath) ? readFileSync(plistPath, 'utf8') : null
+      const uid = typeof process.getuid === 'function' ? process.getuid() : 501
+      const healthTimeout = parseTimeoutMsFlag(args['health-timeout-ms'])
+      if (!healthTimeout.ok) {
+        const message = `--health-timeout-ms ${healthTimeout.error}`
+        if (json) console.log(JSON.stringify({ ok: false, exitCode: 1, error: 'invalid_health_timeout_ms', message }, null, 2))
+        else console.error(`self deploy: ${message}`)
+        process.exitCode = 1
+        return
+      }
 
-    const result = await executeSelfDeploy(plan, deps)
-    if (json) {
-      console.log(JSON.stringify(result, null, 2))
-    } else {
-      for (const step of result.steps) {
-        console.log(`${step.ok ? '✓' : '✗'} ${step.name}${step.detail ? ` — ${step.detail}` : ''}`)
+      // 签名:本机钥匙串里有 Developer ID 就用它重签(见 self-deploy.ts 文件头);
+      // `--no-sign` 关掉。citty/mri 对 `--no-sign` 的处理与 `--no-rollback` 同一套
+      // (boolean 取反落到 `sign:false`),两种拼法都认。
+      const deps = defaultSelfDeployDeps({ waitTasks: Boolean(args['wait-tasks']), force: Boolean(args.force) })
+      const noSign = (args as Record<string, unknown>)['no-sign'] === true || (args as Record<string, unknown>).sign === false
+      const signing = resolveSigningInputs({ repoRoot, disabled: noSign, binaryPath: args.binary ?? null, spawnSync: deps.spawnSync, exists: existsSync })
+
+      let plan
+      try {
+        plan = planSelfDeploy({
+          platform: process.platform,
+          arch: process.arch,
+          homeDir,
+          uid,
+          repoRoot,
+          stateDir: STATE_DIR,
+          plistXml,
+          binary: args.binary,
+          app: args.app,
+          healthTimeoutMs: healthTimeout.value,
+          // citty/mri turns `--no-rollback` into `rollback:false` (boolean
+          // negation) — the declared `'no-rollback'` key stays undefined, so
+          // reading only that key silently ignored the flag and deployed with
+          // rollback still armed. Accept both spellings.
+          rollback: !((args as Record<string, unknown>)['no-rollback'] === true || (args as Record<string, unknown>).rollback === false),
+          ...signing,
+          // 插件来源登记(2026-09-30):只在源码模式下有 checkout 可登记;打包版保留已有指针。
+          pluginSourceCandidates: compiled ? [] : pluginSourceCandidates(repoRoot, deps.spawnSync),
+          allowMissingPlugins: (args as Record<string, unknown>)['allow-missing-plugins'] === true || (args as Record<string, unknown>).allowMissingPlugins === true,
+          allowUnsigned: (args as Record<string, unknown>)['allow-unsigned'] === true || (args as Record<string, unknown>).allowUnsigned === true,
+          exists: existsSync,
+        })
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err)
+        // planSelfDeploy() can itself throw self_deploy_unsupported_platform
+        // (defense in depth — the process.platform check above already
+        // short-circuits the normal path) — keep both paths agreeing on exit 2.
+        const exitCode = error === 'self_deploy_unsupported_platform' ? 2 : 1
+        const message = error === 'launchagent_not_app_bundle'
+          ? 'installed LaunchAgent does not point at an app bundle (looks like a dev-mode/source-checkout plist) — pass --app <path-to-.app> (e.g. "/Applications/Tendhearth CC.app") to target it explicitly'
+          : error === 'launchagent_stale'
+            ? 'installed LaunchAgent points at an app binary that no longer exists (the app was updated/renamed/moved) — open the app once (it repairs the LaunchAgent) or run `<app>/Contents/MacOS/tendhearth-cc-cli service repair`, then retry; or pass --app'
+            : error
+        if (json) console.log(JSON.stringify({ ok: false, exitCode, error, message }, null, 2))
+        else console.error(`self deploy: ${message}`)
+        process.exitCode = exitCode
+        return
       }
-      if (result.ok) console.log(`✓ deployed${result.version ? ` (${result.version})` : ''}`)
-      else {
-        console.error(`✗ self deploy failed${result.rolledBack ? ' — rolled back to previous binary' : ''}`)
-        if (result.diagnostics) console.error(result.diagnostics)
+
+      const result = await executeSelfDeploy(plan, deps, held)
+      if (json) {
+        console.log(JSON.stringify(result, null, 2))
+      } else {
+        for (const step of result.steps) {
+          console.log(`${step.ok ? '✓' : '✗'} ${step.name}${step.detail ? ` — ${step.detail}` : ''}`)
+        }
+        if (result.ok) console.log(`✓ deployed${result.version ? ` (${result.version})` : ''}`)
+        else {
+          console.error(`✗ self deploy failed${result.rolledBack ? ' — rolled back to previous binary' : ''}`)
+          if (result.diagnostics) console.error(result.diagnostics)
+        }
       }
+      process.exitCode = result.exitCode
+    } finally {
+      held.release()
     }
-    process.exit(result.exitCode)
   },
 })
 

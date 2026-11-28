@@ -71,6 +71,24 @@ describe('runSelfChange 一条跑通', () => {
     expect(state.implement.rounds).toEqual({ tests: 0, review: 0, ci: 0 })
   })
 
+  it('holds the deployment lock through selftest failure, rollback and failure recording', async () => {
+    const { deps } = happy()
+    const events: string[] = []
+    deps.lockDeployment = () => {
+      events.push('lock')
+      return { release: () => { events.push('release') } }
+    }
+    const deploy = deps.deploy
+    deps.deploy = async root => { events.push('deploy'); return deploy(root) }
+    deps.selftest = async () => { events.push('selftest'); throw new Error('fixture red') }
+    const rollback = deps.rollback
+    deps.rollback = async root => { events.push('rollback'); return rollback(root) }
+    deps.recordDeployFailure = (_sha, stage) => { events.push(`record ${stage}`) }
+    const { state } = await runSelfChange(fakeState(), deps)
+    expect(state.result).toBe('selftest_failed_rolled_back')
+    expect(events).toEqual(['lock', 'deploy', 'selftest', 'rollback', 'record selftest', 'release'])
+  })
+
   it('--no-deploy ⇒ 合完就写报告,不碰部署与自检', async () => {
     const { deps, rec } = happy()
     const { state, exitCode } = await runSelfChange(fakeState({ noDeploy: true }), deps)

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { decideAutoship, runAutoshipCommand, type AutoshipState, type AutoshipRound, type AutoshipRepo } from './self-autoship'
+import { AutoshipPreparationError, decideAutoship, runAutoshipCommand, type AutoshipState, type AutoshipRound, type AutoshipRepo } from './self-autoship'
 import { SHIP_EXIT, type ShipResult } from './self-ship'
-import type { SelfChangeSettings } from '../lib/agent-config'
+import type { AutoshipConfig } from '../lib/autoship-config'
 
 const previous = '1'.repeat(40)
 const dev = '2'.repeat(40)
@@ -35,12 +35,14 @@ describe('decideAutoship', () => {
 })
 
 function fixture() {
-  let settings: SelfChangeSettings = { auto_ship: true }
+  let settings: AutoshipConfig = { auto_ship: true }
   let state: AutoshipState = { failedShas: [], redShas: [], fail_streak: 0, halted_at: null, halt_reason: null }
   let last: AutoshipRound | null = null
+  let lastSkip: AutoshipRound | null = null
   const release = vi.fn()
   const repo = {
-    fetchDev: vi.fn(() => dev),
+    fetchDev: vi.fn((): string | null => dev),
+    failedTree: vi.fn(() => false),
     resolveInstalled: vi.fn(() => previous as string | null),
     isAncestor: vi.fn(() => true),
     changedFiles: vi.fn((): string[] | null => ['code.ts']),
@@ -50,12 +52,16 @@ function fixture() {
   const deps = {
     platform: 'darwin' as NodeJS.Platform,
     settings: () => settings,
-    writeSettings: vi.fn((patch: Partial<SelfChangeSettings>) => { settings = { ...settings, ...patch } }),
+    writeSettings: vi.fn((patch: Partial<AutoshipConfig>) => { settings = { ...settings, ...patch } }),
     repoUrl: vi.fn(() => 'git@example.test:cc' as string | null),
     lock: vi.fn((): ReturnType<Parameters<typeof runAutoshipCommand>[0]['lock']> => ({ ok: true, release })),
     installed: vi.fn(() => ({ version, sha: '111111111' })),
     repo: vi.fn(() => repo),
-    recentSelfChangeFailure: vi.fn(() => false),
+    targetMismatch: vi.fn(async (): Promise<string | null> => null),
+    pendingTransaction: vi.fn((): string | null => null),
+    clearTransaction: vi.fn(),
+    lastSkip: () => lastSkip,
+    saveSkip: (value: AutoshipRound) => { lastSkip = value },
     loadState: () => state,
     saveState: (value: AutoshipState) => { state = value },
     lastRound: () => last,
@@ -76,7 +82,7 @@ describe('autoship CLI', () => {
     expect((await run()).exitCode).toBe(2)
     expect(deps.lock).not.toHaveBeenCalled()
     expect(deps.repo).not.toHaveBeenCalled()
-    expect(deps.lastRound()).toMatchObject({ sha: null, exitCode: 2, message: '自动部署未开启。' })
+    expect(deps.lastSkip()).toMatchObject({ sha: null, exitCode: 2, message: '自动部署未开启。' })
   })
 
   it('requires a repo on enable and rejects conflicting flags or an unsupported platform', async () => {
@@ -93,7 +99,7 @@ describe('autoship CLI', () => {
     const { deps, run, release } = fixture()
     deps.lock.mockReturnValue({ ok: false, holder: 22 })
     expect(await run()).toMatchObject({ exitCode: 2, message: expect.stringContaining('22') })
-    expect(deps.lastRound()?.exitCode).toBe(2)
+    expect(deps.lastSkip()?.exitCode).toBe(2)
     expect(deps.repo).not.toHaveBeenCalled()
     expect(release).not.toHaveBeenCalled()
   })
@@ -111,7 +117,7 @@ describe('autoship CLI', () => {
     expect((await run()).exitCode).toBe(code)
     expect(repo.ci).not.toHaveBeenCalled()
     expect(repo.ship).not.toHaveBeenCalled()
-    expect(deps.lastRound()).toMatchObject({ sha: dev, at: '1970-01-01T00:00:42.000Z', exitCode: code })
+    expect(code === 2 ? deps.lastSkip() : deps.lastRound()).toMatchObject({ sha: dev, at: '1970-01-01T00:00:42.000Z', exitCode: code })
     expect(release).toHaveBeenCalledOnce()
   })
 
@@ -166,7 +172,7 @@ describe('autoship CLI', () => {
 
   it('success resets the streak; inherited self-change failure skips without notification', async () => {
     const { deps, repo, run } = fixture()
-    deps.recentSelfChangeFailure.mockReturnValueOnce(true)
+    repo.failedTree.mockReturnValueOnce(true)
     expect((await run()).exitCode).toBe(2)
     expect(repo.ship).not.toHaveBeenCalled()
     deps.saveState({ ...deps.loadState(), fail_streak: 1 })
@@ -177,11 +183,64 @@ describe('autoship CLI', () => {
     expect(deps.notice).not.toHaveBeenCalled()
   })
 
-  it('records a fetch failure and releases the lock', async () => {
+  it('records transient fetch failure as a quiet skip and releases the lock', async () => {
     const { deps, repo, run, release } = fixture()
-    repo.fetchDev.mockImplementation(() => { throw new Error('fetch failed') })
-    expect(await run()).toEqual({ exitCode: 1, message: 'fetch failed' })
-    expect(deps.lastRound()).toMatchObject({ sha: null, exitCode: 1 })
+    repo.fetchDev.mockReturnValueOnce(null)
+    expect(await run()).toEqual({ exitCode: 2, message: '暂时无法刷新远端 dev，本轮跳过。' })
+    expect(deps.lastSkip()).toMatchObject({ sha: null, exitCode: 2 })
+    expect(deps.notice).not.toHaveBeenCalled()
+    expect(deps.loadState().fail_streak).toBe(0)
     expect(release).toHaveBeenCalledOnce()
   })
+
+  it('checks for an interrupted transaction before even checking whether the installed commit is current', async () => {
+    const { deps, repo, run } = fixture()
+    deps.pendingTransaction.mockReturnValue('未完成事务，核对 .prev')
+    repo.resolveInstalled.mockReturnValue(dev)
+    expect((await run()).exitCode).toBe(1)
+    expect((await run()).exitCode).toBe(2)
+    expect(repo.fetchDev).not.toHaveBeenCalled()
+    expect(deps.installed).not.toHaveBeenCalled()
+    expect(deps.notice).toHaveBeenCalledExactlyOnceWith('未完成事务，核对 .prev')
+    expect((await run({ status: true })).message).toContain('未完成事务，核对 .prev')
+    expect((await run({ unhalt: true })).exitCode).toBe(0)
+    expect(deps.clearTransaction).toHaveBeenCalledOnce()
+  })
+
+  it('persists instance mismatch and lock contention as skips without losing the last deployment result', async () => {
+    const { deps, repo, run } = fixture()
+    expect((await run()).exitCode).toBe(0)
+    deps.targetMismatch.mockResolvedValueOnce('LaunchAgent 与 daemon 不匹配')
+    expect((await run()).exitCode).toBe(2)
+    expect((await run({ status: true })).message).toContain('LaunchAgent 与 daemon 不匹配')
+    deps.lock.mockReturnValueOnce({ ok: false, holder: 42 })
+    expect((await run()).exitCode).toBe(2)
+    expect(repo.fetchDev).toHaveBeenCalledOnce()
+    expect(deps.lastRound()?.message).toBe('全绿')
+    expect(deps.lastSkip()?.message).toContain('PID 42')
+    expect(deps.notice).not.toHaveBeenCalled()
+    expect(deps.loadState().fail_streak).toBe(0)
+  })
+
+  it('pauses persistent preparation failures until unhalt, and attempts one notice', async () => {
+    const { deps, repo, run } = fixture()
+    repo.ship.mockRejectedValueOnce(new AutoshipPreparationError('工作树有未提交改动'))
+    expect((await run()).exitCode).toBe(1)
+    expect((await run()).exitCode).toBe(2)
+    expect(repo.ship).toHaveBeenCalledOnce()
+    expect(deps.notice).toHaveBeenCalledOnce()
+    expect(deps.loadState()).toMatchObject({ pause_reason: '工作树有未提交改动', fail_streak: 0 })
+    expect((await run({ unhalt: true })).exitCode).toBe(0)
+    expect((await run()).exitCode).toBe(0)
+    expect(deps.loadState().pause_reason).toBeUndefined()
+  })
+
+  it('treats a post-build task refusal as a skip even though manual ship returns 1', async () => {
+    const { deps, repo, run } = fixture()
+    repo.ship.mockResolvedValueOnce({ exitCode: 1, blocked: 'tasks', message: '正在处理交办' })
+    expect(await run()).toEqual({ exitCode: 2, message: '正在处理交办' })
+    expect(deps.notice).not.toHaveBeenCalled()
+    expect(deps.loadState().fail_streak).toBe(0)
+  })
+
 })

@@ -246,7 +246,7 @@ export function planSelfDeploy(input: PlanSelfDeployInput): SelfDeployPlan {
     allowMissingPlugins: input.allowMissingPlugins ?? false,
     appPath: posixDirname(posixDirname(macosDir)),
     allowUnsigned: input.allowUnsigned ?? false,
-    lockPath: posixJoin(input.stateDir, 'self-deploy.lock'),
+    lockPath: deployLockPath(input.homeDir),
     companions: SIDECAR_COMPANIONS.map(name => ({
       from: posixJoin(posixDirname(posixDirname(newBinaryPath)), 'frameworks', `${name}-${archSuffix}-apple-darwin`),
       to: posixJoin(macosDir!, name),
@@ -347,8 +347,10 @@ function isMacosDir(dir: string): boolean {
 // ── execute ──────────────────────────────────────────────────────────
 
 export interface SelfDeployDeps {
-  /** 自动部署在实际动文件前，持部署锁重新确认目标。 */
-  confirmTarget?: () => string | null
+  /** 持锁，在写入部署暂存文件之前记录事务。 */
+  beforeStage?: (plan: SelfDeployPlan) => void
+  /** 暂存和签名完成后、备份与换盘前的最后一道门。 */
+  confirmTarget?: (plan: SelfDeployPlan, previousVersion: string) => string | null | Promise<string | null>
   /** 任何改文件之前检查交办；回滚到已知备份时不等待，保留修复能力。 */
   taskGate?: (stateDir: string) => Promise<string | null>
   spawnSync: (cmd: string, args: string[], opts?: { timeoutMs?: number; windowsHide?: boolean }) => { status: number | null; stdout: string; stderr: string }
@@ -390,10 +392,29 @@ export interface SelfDeployResult {
 
 const HEALTH_POLL_INTERVAL_MS = 500
 
-export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDeps): Promise<SelfDeployResult> {
+export interface DeploymentLock {
+  holds(path: string): boolean
+  release(): void
+}
+
+// 所有计划都会重启同一个用户的 LaunchAgent，即使 --app 或状态目录不同。
+const deployLockPath = (homeDir: string) => posixJoin(homeDir, '.wechat-cc-self-deploy.lock')
+
+export function acquireDeploymentLock(homeDir: string): DeploymentLock | { heldBy: number } {
+  const path = deployLockPath(homeDir)
+  const lock = acquireDeployLock(path)
+  if ('heldBy' in lock) return lock
+  let held = true
+  return {
+    holds: requested => held && requested === path,
+    release: () => { if (held) { held = false; lock.release() } },
+  }
+}
+
+export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDeps, lock?: DeploymentLock): Promise<SelfDeployResult> {
   // 两次部署同时跑(手动 + 自改流水线)会抢同一个 `.new`,后一次的备份还会把前一次刚换上、还没过健康门的
   // 二进制拷成 `.prev` ⇒ 之后每次回滚都回到那个没验过的版本(2026-10-10 评审)。整次部署持锁。
-  const held = plan.lockPath && deps.lock ? deps.lock(plan.lockPath) : null
+  const held = plan.lockPath && deps.lock && !lock?.holds(plan.lockPath) ? deps.lock(plan.lockPath) : null
   if (held && 'heldBy' in held) {
     return { ok: false, exitCode: 1, steps: [{ name: 'lock', ok: false, detail: `another self deploy is running (pid ${held.heldBy})` }] }
   }
@@ -408,9 +429,6 @@ async function executeLocked(plan: SelfDeployPlan, deps: SelfDeployDeps): Promis
     catch (err) { reason=`读取交办任务失败：${err instanceof Error?err.message:err}` }
     if(reason)return {ok:false,exitCode:1,blocked:'tasks',steps:[{name:'tasks',ok:false,detail:reason}]}
   }
-
-  const changed = deps.confirmTarget?.()
-  if (changed) return { ok: false, exitCode: 1, blocked: 'target', steps: [{ name: 'target', ok: false, detail: changed }] }
 
   // 1. preflight — new binary exists and `--version` exits 0. Nothing on
   // disk is touched yet, so a preflight failure just returns — no rollback
@@ -445,6 +463,7 @@ async function executeLocked(plan: SelfDeployPlan, deps: SelfDeployDeps): Promis
   // the very binary it was about to install — and then "swapped" the
   // now-broken `.prev` back onto the sidecar. Staging first means the good
   // bytes are already on a fresh inode by the time anything else moves.
+  deps.beforeStage?.(plan)
   try {
     stageBinary(deps, plan.newBinaryPath, plan.tmpPath)
   } catch (err) {
@@ -481,10 +500,6 @@ async function executeLocked(plan: SelfDeployPlan, deps: SelfDeployDeps): Promis
     steps.push(signed)
   }
 
-  // 2c. native — sidecar 旁边的原生库(onnxruntime)。只加不减、老 sidecar 不认它们,所以不进回滚;
-  // 装不上也不拦部署(知识库向量化会自己退回 Python),只记一笔。从 .prev 回滚时不动。
-  if (!deployingFromBackup && plan.companions?.length) steps.push(installCompanions(plan, deps))
-
   // 3. backup — <sidecar> → <sidecar>.prev, overwriting whatever backup was
   // already there. Exactly one generation of rollback is kept on purpose.
   //
@@ -501,6 +516,18 @@ async function executeLocked(plan: SelfDeployPlan, deps: SelfDeployDeps): Promis
   const currentProbe = deps.spawnSync(plan.sidecarPath, ['--version'], { timeoutMs: 5000, windowsHide: true })
   const currentOk = currentProbe.status === 0
   const previousVersion = currentOk ? (currentProbe.stdout || currentProbe.stderr).trim() : ''
+  const companions = !deployingFromBackup && plan.companions?.length ? stageCompanions(plan, deps) : null
+  let changed: string | null | undefined
+  try { changed = await deps.confirmTarget?.(plan, previousVersion) }
+  catch (err) { changed = `无法复核部署条件：${errMsg(err)}` }
+  if (changed) {
+    deps.fs.unlink(plan.tmpPath)
+    companions?.discard()
+    return { ok: false, exitCode: 1, blocked: 'target', steps: [...steps, { name: 'target', ok: false, detail: changed }] }
+  }
+
+  // 2c. native — sidecar 旁边的原生库(onnxruntime)。只加不减、老 sidecar 不认它们,所以不进回滚;
+  // 装不上也不拦部署(知识库向量化会自己退回 Python),只记一笔。从 .prev 回滚时不动。
   if (deployingFromBackup) {
     steps.push({ name: 'backup', ok: true, detail: 'skipped: deploying from the backup itself' })
   } else if (!currentOk) {
@@ -512,10 +539,13 @@ async function executeLocked(plan: SelfDeployPlan, deps: SelfDeployDeps): Promis
       steps.push({ name: 'backup', ok: true })
     } catch (err) {
       try { deps.fs.unlink(plan.tmpPath) } catch { /* best-effort tmp cleanup */ }
+      companions?.discard()
       steps.push({ name: 'backup', ok: false, detail: errMsg(err) })
       return { ok: false, exitCode: 1, steps, version }
     }
   }
+
+  if (companions) steps.push(companions.install())
 
   // 4. swap — rename the already-staged copy over the sidecar. See the file
   // header for why this is copy-to-fresh-path + rename rather than an
@@ -671,8 +701,9 @@ function signSidecar(plan: SelfDeployPlan, deps: SelfDeployDeps): SelfDeployStep
 }
 
 /** 每个库:拷到 `<目标>.new` → 签名(有身份 ⇒ Developer ID + runtime;没有 ⇒ ad-hoc)→ rename(新 inode,同 sidecar)。 */
-function installCompanions(plan: SelfDeployPlan, deps: SelfDeployDeps): SelfDeployStep {
-  const installed: string[] = [], problems: string[] = []
+function stageCompanions(plan: SelfDeployPlan, deps: SelfDeployDeps) {
+  const staged: Array<{ tmp: string; to: string }> = []
+  const problems: string[] = []
   for (const { from, to } of plan.companions ?? []) {
     if (!deps.fs.exists(from)) continue
     const tmp = `${to}.new`
@@ -682,16 +713,25 @@ function installCompanions(plan: SelfDeployPlan, deps: SelfDeployDeps): SelfDepl
         ? ['--force', '--sign', plan.signing.identityHash, '--options', 'runtime', '--timestamp', tmp]
         : ['--force', '--sign', '-', tmp], { timeoutMs: CODESIGN_TIMEOUT_MS, windowsHide: true })
       if (r.status !== 0) throw new Error(`codesign exited ${r.status ?? 'null'}: ${(r.stderr || r.stdout).trim()}`)
-      deps.fs.rename(tmp, to)
-      installed.push(basename(to))
+      staged.push({ tmp, to })
     } catch (err) {
       try { deps.fs.unlink(tmp) } catch { /* best-effort */ }
       try { deps.fs.unlink(`${tmp}.cstemp`) } catch { /* best-effort */ }
       problems.push(`${basename(to)}: ${errMsg(err)}`)
     }
   }
-  if (problems.length) deps.log(`native libraries not installed (knowledge embedding falls back): ${problems.join('; ')}`)
-  return { name: 'native', ok: true, detail: problems.length ? `partial: ${problems.join('; ')}` : installed.length ? installed.join(', ') : 'none built' }
+  return {
+    discard() { for (const { tmp } of staged) deps.fs.unlink(tmp) },
+    install(): SelfDeployStep {
+      const installed: string[] = []
+      for (const { tmp, to } of staged) {
+        try { deps.fs.rename(tmp, to); installed.push(basename(to)) }
+        catch (err) { deps.fs.unlink(tmp); problems.push(`${basename(to)}: ${errMsg(err)}`) }
+      }
+      if (problems.length) deps.log(`native libraries not installed (knowledge embedding falls back): ${problems.join('; ')}`)
+      return { name: 'native', ok: true, detail: problems.length ? `partial: ${problems.join('; ')}` : installed.length ? installed.join(', ') : 'none built' }
+    },
+  }
 }
 
 /** Re-sign the .app bundle (main binary + resource seal). No `--deep`: nested binaries carry their own signatures. */

@@ -53,7 +53,7 @@ export interface ShipOpts {
 
 export const SHIP_EXIT = { shipped: 0, deploy_failed: 1, selftest_red: 2, busy: 3, build_failed: 4, unguarded: 5, tree_unfit: 6 } as const
 
-export interface ShipResult { exitCode: number; message: string; version?: string }
+export interface ShipResult { exitCode: number; message: string; version?: string; blocked?: SelfDeployResult['blocked'] }
 
 export const DEFAULT_MAX_LOAD_PER_CPU = 1.0
 const LOAD_POLL_MS = 60_000
@@ -118,7 +118,7 @@ export async function runShip(deps: ShipDeps, opts: ShipOpts = {}): Promise<Ship
   deps.log('部署…')
   const d = await deps.deploy('deploy').catch(err => failedDeploy(err))
   if (d.blocked) {
-    return { exitCode: d.blocked === 'tasks' ? SHIP_EXIT.busy : SHIP_EXIT.tree_unfit, message: d.steps.map(s => s.detail).filter(Boolean).join('\n') }
+    return { exitCode: d.blocked === 'tasks' ? SHIP_EXIT.deploy_failed : SHIP_EXIT.tree_unfit, blocked: d.blocked, message: d.steps.map(s => s.detail).filter(Boolean).join('\n') }
   }
   if (!d.ok) {
     const steps = d.steps.filter(s => !s.ok).map(s => `- ${s.name}: ${s.detail ?? ''}`).join('\n')
@@ -126,10 +126,17 @@ export async function runShip(deps: ShipDeps, opts: ShipOpts = {}): Promise<Ship
   }
 
   deps.log(`已部署 ${d.version ?? ''},跑自检…`)
-  const red = await deps.selftest()
-    .then(t => [t.workbench, t.chat].filter(r => !r.ok).map(failedChecks).join('、'))
-    .catch(err => err instanceof Error ? err.message || err.name : String(err))
-  if (red) {
+  let failure: { detail: string } | null = null
+  try {
+    const result = await deps.selftest()
+    const red = [result.workbench, result.chat].filter(r => !r.ok)
+    if (red.length) failure = { detail: red.map(failedChecks).join('、') }
+  } catch (err) {
+    const detail = err instanceof Error ? err.message || err.name : String(err)
+    failure = { detail: detail || '自检拒绝，未提供原因' }
+  }
+  if (failure) {
+    const red = failure.detail
     const rb = await deps.deploy('rollback').catch(err => failedDeploy(err))
     return {
       exitCode: SHIP_EXIT.selftest_red,

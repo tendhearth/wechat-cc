@@ -21,8 +21,9 @@ import { join } from 'node:path'
 
 import { workbenchSubprocessEnv } from '../../adapters/executors/subprocess-env'
 import { readApiInfo } from '../../lib/api-info'
+import { deploymentFailures } from '../deployment-failures'
 import { defaultCiTriageDeps, runCiTriage } from '../ci-triage-run'
-import { defaultSelfDeployDeps, executeSelfDeploy, planSelfDeploy, resolveSigningInputs, type DeveloperIdIdentity, type SelfDeployPlan, type SelfDeployResult } from '../self-deploy'
+import { acquireDeploymentLock, defaultSelfDeployDeps, executeSelfDeploy, planSelfDeploy, resolveSigningInputs, type DeploymentLock, type SelfDeployDeps, type DeveloperIdIdentity, type SelfDeployPlan, type SelfDeployResult } from '../self-deploy'
 import { defaultSelftestDeps, runChatSelftest, runWorkbenchSelftest, type SelftestReport } from '../selftest'
 import type { SelfChangeConfig } from './config'
 import { makeDaemonClient } from './daemon-client'
@@ -92,24 +93,35 @@ export function selfDeployPlanFor(input: SelfDeployPlanInput): SelfDeployPlan {
  * 用 repoRoot 里构建好的 sidecar 部署(或回滚到 .prev)。自改的 deploy 步和 `self ship` 共用这一份。
  * entitlements.plist 从 repoRoot 拿(自改时就是这条运行自己的工作树);签名身份从本机钥匙串探。
  */
-export async function deployFromRepo(stateDir: string, repoRoot: string, mode: 'deploy' | 'rollback', taskOptions: DeployTaskOptions = {}, confirmTarget?: () => string | null): Promise<SelfDeployResult> {
-  const homeDir = homedir()
-  const p = launchAgentPlistPath(homeDir)
-  const deps = defaultSelfDeployDeps(taskOptions)
-  const signing = resolveSigningInputs({ repoRoot, disabled: false, spawnSync: deps.spawnSync, exists: existsSync })
-  const plan = selfDeployPlanFor({
-    platform: process.platform,
-    arch: process.arch,
-    homeDir,
-    uid: typeof process.getuid === 'function' ? process.getuid() : 501,
-    repoRoot,
-    stateDir,
-    plistXml: existsSync(p) ? readFileSync(p, 'utf8') : null,
-    mode,
-    ...signing,
-    exists: existsSync,
-  })
-  return await executeSelfDeploy(plan, { ...deps, confirmTarget })
+type DeployHooks = Pick<SelfDeployDeps, 'confirmTarget' | 'beforeStage'>
+
+export function makeRepoDeployment(stateDir: string, repoRoot: string, taskOptions: DeployTaskOptions, lock?: DeploymentLock, hooks: DeployHooks = {}) {
+  let plan: SelfDeployPlan | undefined
+  return async (mode: 'deploy' | 'rollback'): Promise<SelfDeployResult> => {
+    const deps = defaultSelfDeployDeps(taskOptions)
+    if (!plan) {
+      const homeDir = homedir()
+      const p = launchAgentPlistPath(homeDir)
+      const signing = resolveSigningInputs({ repoRoot, disabled: false, spawnSync: deps.spawnSync, exists: existsSync })
+      plan = selfDeployPlanFor({
+        platform: process.platform,
+        arch: process.arch,
+        homeDir,
+        uid: process.getuid?.() ?? 501,
+        repoRoot,
+        stateDir,
+        plistXml: existsSync(p) ? readFileSync(p, 'utf8') : null,
+        mode: 'deploy',
+        ...signing,
+        exists: existsSync,
+      })
+    }
+    if (mode === 'rollback') {
+      // 复用已部署的目标，避免重读 plist 后从另一个包的 .prev 回滚。
+      return executeSelfDeploy({ ...plan, newBinaryPath: plan.prevPath, rollback: false }, deps, lock)
+    }
+    return executeSelfDeploy(plan, { ...deps, ...hooks }, lock)
+  }
 }
 
 /** 自检那两条的注入口(生产是 selftest.ts 的两个真跑,测试塞假件)。 */
@@ -149,7 +161,7 @@ export interface PipelineDepsOpts {
    */
   runId: string
   /** External deployment boundary; offline wiring tests must never replace files. */
-  deployFromRepo?: typeof deployFromRepo
+  deployFromRepo?: (stateDir: string, repoRoot: string, mode: 'deploy' | 'rollback', options: DeployTaskOptions) => Promise<SelfDeployResult>
   deployTasks?: DeployTaskGateDeps
 }
 
@@ -163,6 +175,8 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
   const homeDir = homedir()
 
   const taskOptions={waitTasks:true,timeoutMs:DEPLOY_TASK_WAIT_MS,nonInteractive:true}
+  let deployLock: DeploymentLock | undefined
+  let deployment: ReturnType<typeof makeRepoDeployment> | undefined
   const runDeploy = async (repoRoot: string, mode: 'deploy' | 'rollback'):Promise<SelfDeployResult> => {
     if(mode==='deploy') {
       const reason=opts.deployTasks
@@ -170,7 +184,9 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
         : await defaultDeployTaskGate(stateDir,taskOptions)
       if(reason)return {ok:false,exitCode:1,blocked:'tasks',steps:[{name:'tasks',ok:false,detail:reason}]}
     }
-    return (opts.deployFromRepo ?? deployFromRepo)(stateDir,repoRoot,mode,taskOptions)
+    if (opts.deployFromRepo) return opts.deployFromRepo(stateDir, repoRoot, mode, taskOptions)
+    deployment ??= makeRepoDeployment(stateDir, repoRoot, taskOptions, deployLock)
+    return deployment(mode)
   }
 
   const runTree = runPath(config, opts.runId)
@@ -226,6 +242,13 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
     // ci land 那一套 deps,去掉它用不着的 flake 登记表。
     forge: ghForge((cwd) => { const { registry: _registry, ...deps } = defaultCiTriageDeps(cwd); return deps }),
 
+    lockDeployment: () => {
+      const held = acquireDeploymentLock(homeDir)
+      if ('heldBy' in held) return held
+      deployLock = held
+      return { release() { held.release(); deployLock = undefined; deployment = undefined } }
+    },
+    recordDeployFailure: (sha, stage) => deploymentFailures(homeDir).add(makeGit(nodeGitSpawnSync, runTree), sha, stage),
     deploy: (repoRoot) => runDeploy(repoRoot, 'deploy'),
     machineLoad: () => ({ load1: loadavg()[0] ?? 0, cpus: cpus().length }),
     // 教训账:一行一条 JSON,追加写(lessons.ts)。`self discover --source lessons` 读它。

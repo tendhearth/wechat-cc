@@ -122,11 +122,17 @@ describe('makeSelfChangeSpawner', () => {
   })
 
   it('autoship detached 启动，只传显式状态目录和经过过滤的环境', () => {
-    expect(make().autoship()).toEqual({ ok: true, pid: 4242 })
+    const once = vi.fn()
+    spawn.mockReturnValueOnce({ pid: 4242, unref, once })
+    const result = make().autoship('2026-11-27T00:00:00.000Z')
+    expect(result).toEqual({ ok: true, pid: 4242, alive: expect.any(Function) })
+    expect(result.alive?.()).toBe(true)
+    once.mock.calls.find(([event]) => event === 'exit')![1]()
+    expect(result.alive?.()).toBe(false)
     const [cmd, args, opts] = spawn.mock.calls[0]!
     expect(cmd).toBe('/usr/local/bin/bun')
     expect(args).toEqual(['/repo/cli.ts', 'self', 'autoship'])
-    expect(opts).toMatchObject({ detached: true, stdio: 'ignore', windowsHide: true, env: { WECHAT_STATE_DIR: stateDir } })
+    expect(opts).toMatchObject({ detached: true, stdio: 'ignore', windowsHide: true, env: { WECHAT_STATE_DIR: stateDir, WECHAT_CC_AUTOSHIP_DAEMON_PID: String(process.pid), WECHAT_CC_AUTOSHIP_DAEMON_BOOT: '2026-11-27T00:00:00.000Z' } })
     expect(opts.env.WECHAT_TOKEN).toBeUndefined()
     expect(unref).toHaveBeenCalledOnce()
   })

@@ -283,8 +283,6 @@ export const ForwardBudgetConfig = z.object({
  * 丢掉整块 + 日志一行,其余字段不受影响。
  */
 export const SelfChangeSettings = z.object({
-  auto_ship: z.boolean().optional(),
-  auto_ship_interval_min: z.number().optional(),
   repo_url: z.string().optional(),
   branch: z.string().optional(),
   workdir: z.string().optional(),

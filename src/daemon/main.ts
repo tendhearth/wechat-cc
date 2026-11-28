@@ -76,13 +76,15 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
 async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): Promise<DaemonHandle> {
   const { stateDir, dangerously } = opts
   const base = await openFoundation({ stateDir }, undo)
-  const requestRestart = makeRequestRestart(stateDir, () => shutdown())
-  const f: Foundation = { ...base, dangerously, ...(opts.terminalTranscriptRoots ? { terminalTranscriptRoots: opts.terminalTranscriptRoots } : {}), ...(opts.tokenRegistry ? { tokenRegistry: opts.tokenRegistry } : {}), ...(opts.makeCheckupTurn ? { makeCheckupTurn: opts.makeCheckupTurn } : {}), ...(opts.schedulerIntervalMs !== undefined ? { schedulerIntervalMs: opts.schedulerIntervalMs } : {}), ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}), ...(opts.scheduledJobsIntervalMs !== undefined ? { scheduledJobsIntervalMs: opts.scheduledJobsIntervalMs } : {}), ...(opts.reminderIntervalMs !== undefined ? { reminderIntervalMs: opts.reminderIntervalMs } : {}), ...(opts.machineIdle ? { machineIdle: opts.machineIdle } : {}), ...(opts.escalateAfterMs !== undefined ? { escalateAfterMs: opts.escalateAfterMs } : {}), ...(opts.desktopNotify ? { desktopNotify: opts.desktopNotify } : {}), requestRestart }
+  let stopping = false
+  const scheduleRestart = makeRequestRestart(stateDir, () => shutdown())
+  const requestRestart = (reason: string) => { stopping = true; scheduleRestart(reason) }
+  const f: Foundation = { ...base, dangerously, isStopping: () => stopping, ...(opts.terminalTranscriptRoots ? { terminalTranscriptRoots: opts.terminalTranscriptRoots } : {}), ...(opts.tokenRegistry ? { tokenRegistry: opts.tokenRegistry } : {}), ...(opts.makeCheckupTurn ? { makeCheckupTurn: opts.makeCheckupTurn } : {}), ...(opts.schedulerIntervalMs !== undefined ? { schedulerIntervalMs: opts.schedulerIntervalMs } : {}), ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}), ...(opts.scheduledJobsIntervalMs !== undefined ? { scheduledJobsIntervalMs: opts.scheduledJobsIntervalMs } : {}), ...(opts.reminderIntervalMs !== undefined ? { reminderIntervalMs: opts.reminderIntervalMs } : {}), ...(opts.machineIdle ? { machineIdle: opts.machineIdle } : {}), ...(opts.escalateAfterMs !== undefined ? { escalateAfterMs: opts.escalateAfterMs } : {}), ...(opts.desktopNotify ? { desktopNotify: opts.desktopNotify } : {}), requestRestart }
   const modules = createModules(daemonModules(f), { log: (t, l) => log(t, l) })
   // 状态进 /v1/health.subsystems(和 bootstrap 的可选接线块一起)
   f.sup.adopt(modules)
   // 收尾(runtime/shutdown.ts):不管启动有没有走完,都停已经起了的 —— 容器逆序、agy 配置、db、锁。
-  const shutdown = makeDaemonShutdown({
+  const stop = makeDaemonShutdown({
     log: (t, l) => log(t, l),
     stopHeartbeat: base.stopHeartbeat,
     modules,
@@ -91,6 +93,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     closeDb: () => base.db.close(),
     releaseLock: base.releaseLock,
   })
+  const shutdown = () => { stopping = true; return stop() }
   opts.onShutdownReady?.(shutdown)
 
   try {

@@ -12,7 +12,7 @@ describe('autoship timer', () => {
     [Infinity, 20],
   ])('interval %s starts at minute %s and repeats', (configured, first) => {
     let now = 0
-    const start = vi.fn()
+    const start = vi.fn(() => undefined)
     const tick = makeAutoshipTick({ now: () => now, settings: () => ({ auto_ship: true, auto_ship_interval_min: configured }), start })
     for (const time of [0, ms(5) - 1, ms(first) - 1]) {
       now = time
@@ -34,7 +34,7 @@ describe('autoship timer', () => {
   it('loads changes on the next tick and never starts while disabled', () => {
     let now = 0
     let enabled: boolean | undefined
-    const start = vi.fn()
+    const start = vi.fn(() => undefined)
     const tick = makeAutoshipTick({ now: () => now, settings: () => ({ auto_ship: enabled }), start })
     now = ms(21)
     tick()
@@ -47,4 +47,20 @@ describe('autoship timer', () => {
     tick()
     expect(start).toHaveBeenCalledTimes(1)
   })
+
+  it('does not start another round until its detached child exits', () => {
+    let now = 0
+    let alive = true
+    const start = vi.fn(() => () => alive)
+    const tick = makeAutoshipTick({ now: () => now, settings: () => ({ auto_ship: true }), start })
+    now = ms(20)
+    tick()
+    now = ms(80)
+    tick()
+    expect(start).toHaveBeenCalledOnce()
+    alive = false
+    tick()
+    expect(start).toHaveBeenCalledTimes(2)
+  })
+
 })

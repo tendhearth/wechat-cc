@@ -63,29 +63,29 @@ wechat-cc self deploy --json     # 机器可读
 
 ## 合完自动部署
 
-维护用 macOS 可以让 CC 在合完 `dev` 后自己部署。默认关闭。在源码工作区运行 `wechat-cc self autoship --enable`，会记下仓库地址，部署后从 App 启动的 daemon 也能继续检查。打包版会从 `self_change.repo_url` 或已有中枢克隆找仓库地址。机器需要能用 `git`、`gh`、`bun` 和 `rustc`，且 daemon 的运行环境能访问仓库和 GitHub Actions。中枢克隆缺失时会按仓库地址创建。已装的 sidecar 必须能用 `--version` 报出提交，部署目标从现有 LaunchAgent 推导。
+维护用 macOS 可以在 `dev` 的 CI 通过后自动部署，默认关闭。在源码工作区运行 `wechat-cc self autoship --enable` 会记下仓库地址。打包版也可从 `self_change.repo_url` 或已有中枢仓库查到地址。自动轮需要 `git`、`gh`、`bun` 和 `rustc`，以及访问仓库和 GitHub Actions 的权限。
 
-- `wechat-cc self autoship --disable` 关闭自动检查；已启动但还没换文件的轮次会在换文件前复查开关。
-- `wechat-cc self autoship --status` 查看上次看到的 SHA、上轮时间和结论，以及连续故障次数与停机状态。
-- `wechat-cc self autoship` 手动跑一轮就退出。开启后 daemon 缺省每 20 分钟拉起一个 detached CLI，由 CLI 做检查和部署。设置 `self_change.auto_ship_interval_min` 改间隔，最短 5 分钟，开机头 5 分钟不拉，配置每分钟重读。
+- `wechat-cc self autoship --disable` 关闭自动部署，已启动的轮次在换文件前也会重读开关。
+- `wechat-cc self autoship --status` 显示上次有效结论、当前跳过原因、准备暂停、未完成事务与停机状态。
+- 独立配置文件为 `$STATE_DIR/self-change/autoship-config.json`，由 CLI 原子写入，权限为 0600。`auto_ship_interval_min` 缺省 20 分钟，最短 5 分钟。daemon 每分钟重读配置。上一个 detached CLI 活着时，定时器继续等它退出。`wechat-cc self autoship` 的部署轮由 daemon 拉起，终端可直接运行带管理选项的命令。
 
-每轮按以下顺序判断：
+每轮先拿自改的中枢互斥锁和部署事务锁，争锁只记跳过。发现 `autoship-transaction.json` 遗留时停机并尝试通知一次，记录目标 SHA、上一版版本、备份位置与开始时间。核对实际安装和备份后运行 `wechat-cc self autoship --unhalt`，这表示主人已处理该事务。准备失败也会暂停并通知一次，例如中枢 `origin` 与配置不符、建不了工作树或工作树有改动。修复后同样用 `--unhalt` 恢复。短暂 fetch 失败留给下一轮重试。
 
-1. 检查开关、`self change` 共用锁和自动部署停机状态。锁会注明持有者是 `autoship`，从检查到自检与回滚都持有。自改与自动部署不能同时跑。
-2. 在 `<workdir>/repo` fetch `origin/dev`，把已装 sidecar 的短 SHA 解析成完整提交。已经装了顶端就结束，已装提交无法确认或不在 `dev` 的祖先链上就跳过。只改了 Markdown 或树没有差异也结束。比较关闭 Git 改名检测，`diff` 失败按有代码改动处理。
-3. 用 `ci triage` 查该 SHA 的 `dev` 推送轮。推送轮使用合并队列的 tree 回执或跑完整 CI。CI 未完成或读不到时等下一轮，红时相同 SHA 只向主人投一次通知。CI 绿后仍会跳过此前部署失败的 SHA，包括自改已记录的部署及自检回滚失败。
-4. 在 `<workdir>/autoship` 建一棵钉在该 SHA 的干净 detached 工作树，走 `self ship` 的负载、网络守护和 `--wait-tasks` 交办任务门。通过后才用 `bun install --frozen-lockfile` 装依赖并构建。底层部署在换文件前再检查交办和安装目标，部署后跑工作台和对话自检。手工部署仍由整合者串行安排。
+只有发起轮次的打包 daemon 与已加载的日用 LaunchAgent 匹配时才继续。CLI 通过本地 API 验证 PID、启动时间、状态目录和 sidecar 路径，再核对 LaunchAgent 的启动程序和当前 PID。源码和独立实例的跳过原因记在状态里。
 
-成功只记状态和 `AUTOSHIP` 日志。负载高、交办忙或任务状态未知时安静跳过。依赖安装、构建、部署或自检失败时，经 daemon 的现有通知接口向主人投一次，附 SHA、阶段、回滚结果和探到的当前 sidecar 版本。读不到版本时会写明。去重记录先落盘，接口未确认时仍只投递一次，是否补发由 daemon 现有通知链路决定。连续两次故障会停机，成功会清零；`wechat-cc self autoship --unhalt` 解开并清零次数，失败 SHA 的记录继续保留。
+自动轮 fetch `origin/dev` 后，要求已装 sidecar 的提交能确认为它的祖先。已是顶端、tree 相同或只有 Markdown 差异时结束。候选 SHA 必须有已绿的 dev 推送轮，包含 CI 明确复用队列回执的轻量轮。CI 红按 SHA 只尝试通知一次。部署失败记录包含 Git tree 和忽略 Markdown 后的内容指纹，相同 tree 或只改 Markdown 的候选继续跳过。手动 ship 自检红和自改部署相关失败共享该记录，`--unhalt` 保留记录。
 
-本轮结论原子写为 `$STATE_DIR/self-change/autoship.json` 的一行，去重与停机记在同目录的 `autoship-state.json`。两份文件均以 0600 写入。自改的停机和自动部署的停机各自解除。`self change --no-deploy` 只限制这条自改，合入的提交仍可能被自动部署，需留给人工选时间时先关闭自动部署。
+构建使用 `<workdir>/autoship` 中钉住候选 SHA 的工作树。负载、网络守护、交办门放行后运行 `bun install --frozen-lockfile` 并构建。部署暂存前写事务，签完暂存产物后、写备份与换文件前再次检查。临门 fetch 上限为 25 秒，查询失败或远端顶端变化时放弃本轮。还会复核开关、工作树、安装目标、交办、负载和网络守护，并通过 daemon 查询在途会话、后台忙碌及关机状态。自检全绿或已确认回滚后清除事务。换文件前安全退出也清除事务。
 
-| 退出码 | 含义 |
-| --- | --- |
-| 0 | 已部署、当前版本已是顶端、相对当前版本无代码变化，或管理操作成功 |
-| 1 | 本轮故障，例如 fetch、工作树、构建、部署、自检或状态写入失败 |
-| 2 | 本轮跳过，例如未开启、锁忙、停机、已装版本无法确认或偏离 dev、CI 未放行、SHA 已失败、本机忙或部署门未通过 |
-| 3 | 用法或运行条件不满足，例如管理选项冲突、平台不支持、缺少仓库地址 |
+构建、部署或自检失败经 daemon 向主人尝试通知，带 SHA、阶段、回滚结果和当前版本。连续两次此类故障停机，成功或 `--unhalt` 清零。上次有效结论写入 `autoship.json`，当前跳过写入 `autoship-skip.json`，停机与计数写入 `autoship-state.json`，均在 `$STATE_DIR/self-change/`，原子写、0600。自改停机单独解除。`self change --no-deploy` 只限制这条自改，合入的提交仍可能被自动部署。
+
+### 已知限制
+
+- 评审 7：构建产物与健康门还没有用完整目标 SHA 做强绑定。
+- 评审 8：PID 文件锁仍有极端的初始化、回收竞态，PID 复用或持有者卡死也可能阻挡后续运行。
+- 评审 11：通知去重先落盘，当前没有待投通知账和补投。
+- 评审 12：不同克隆对旧 sidecar 的短 SHA 可能有不同解释。
+- 最后的 daemon 查询是即时状态，API 回包至重启之间仍可能收到新任务。
 
 ## 部署完稳不稳:`wechat-cc self soak`(2026-10-23)
 
@@ -112,7 +112,7 @@ wechat-cc self deploy --json     # 机器可读
 
 **不签却往 Developer ID 封好的包里换 ⇒ 拒绝**(2026-10-10):不签时先 `codesign -dv` 看一眼 .app,带 TeamIdentifier ⇒ `signing` 步骤失败、什么都不动(09-28 事故:ad-hoc sidecar 塞进 DevID 包,TCC 框把 daemon 堵死)。从 `.prev` 回滚不拦;确实要换就加 `--allow-unsigned`。
 
-**部署锁**:整次部署持状态目录里的 `self-deploy.lock`(写 pid;进程没了就接过来)。另一次部署在跑 ⇒ `lock` 步骤失败退出 1 —— 两次同时跑会抢同一个 `.new`,后一次还会把前一次刚换上、没过健康门的二进制拷成 `.prev`。
+**部署锁**位于 `~/.wechat-cc-self-deploy.lock`，同一用户的 LaunchAgent 共用这把锁。手动 ship、手动 deploy、自改和自动轮在确认目标前取锁，持到健康门、自检或回滚结束。内层部署复用已持的锁。手动 deploy 争锁退出 1，自动轮争锁退出 2。
 
 ## 回滚别把备份吃了(2026-09-18 复审)
 
