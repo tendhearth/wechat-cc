@@ -9,7 +9,7 @@
  * src/features/reminders/store.ts, which this mirrors structurally.
  */
 import type {Db} from '../../lib/db'
-import type {PendingReport} from '../../domain/matters/report'
+import type {ComparisonReportKey,PendingReport} from '../../domain/matters/report'
 
 export type OutboxStatus = 'pending' | 'sent' | 'dropped'
 
@@ -72,7 +72,7 @@ export interface ReportOutboxStore {
    * OutboxRecord's doc comment for why `created_at` doesn't work). Returns
    * the row id (new or the merged/collapsed existing one).
    */
-  insert(report: PendingReport, now: number, ref?: string | null): Promise<number>
+  insert(report: PendingReport, now: number, ref?: string | null, comparison?: ComparisonReportKey): Promise<number>
   /** Pending rows with next_at <= now, oldest-due first. */
   listDue(now: number): Promise<OutboxRecord[]>
   /** Mark delivered. */
@@ -130,7 +130,7 @@ export function makeReportOutboxStore(db: Db): ReportOutboxStore {
   // The one canonical pending row for a matter, if any — lowest id wins
   // (deterministic; matters if dogfood data has historical duplicates).
   const stmtPendingIdByMatter = db.query<{id: number}, [string]>(
-    "SELECT id FROM matter_report_outbox WHERE matter_id = ? AND status = 'pending' ORDER BY id LIMIT 1",
+    "SELECT id FROM matter_report_outbox WHERE matter_id = ? AND comparison_position IS NULL AND status = 'pending' ORDER BY id LIMIT 1",
   )
   // Merge into that ONE row by id (not by matter_id — a second matching row
   // must not also be touched). next_at only jumps to `now` when attempts=0
@@ -146,10 +146,12 @@ export function makeReportOutboxStore(db: Db): ReportOutboxStore {
   // time by the sweeper, and a silent DELETE leaves no trace that a real
   // queued delivery intent ever existed (evaluation round 3 issue ②).
   const stmtDropOtherPending = db.query<unknown, [string, number]>(
-    "UPDATE matter_report_outbox SET status = 'dropped' WHERE matter_id = ? AND status = 'pending' AND id <> ?",
+    "UPDATE matter_report_outbox SET status = 'dropped' WHERE matter_id = ? AND comparison_position IS NULL AND status = 'pending' AND id <> ?",
   )
   const stmtListDue = db.query<Row, [number]>(
-    `SELECT ${COLS} FROM matter_report_outbox WHERE status = 'pending' AND next_at <= ? ORDER BY next_at ASC, id ASC`,
+    `SELECT ${COLS} FROM matter_report_outbox WHERE status = 'pending' AND next_at <= ? AND (comparison_position IS NULL OR EXISTS(
+      SELECT 1 FROM matter_plan_comparisons c WHERE c.matter_id=matter_report_outbox.matter_id AND c.position=matter_report_outbox.comparison_position
+      AND c.revision=matter_report_outbox.comparison_revision AND c.text IS NOT NULL)) ORDER BY next_at ASC, id ASC`,
   )
   // Status-guarded like reminders' markSent: a row that raced to 'dropped' (or
   // was already sent) must not flip back to 'sent'.
@@ -167,7 +169,18 @@ export function makeReportOutboxStore(db: Db): ReportOutboxStore {
   )
 
   return {
-    async insert(report, now, ref = null) {
+    async insert(report, now, ref = null, comparison) {
+      if(comparison){
+        const {position,revision}=comparison
+        return db.transaction(()=>{
+          db.query("UPDATE matter_report_outbox SET status='dropped' WHERE matter_id=? AND comparison_position=? AND comparison_revision<? AND status='pending'").run(report.matterId,position,revision)
+          const existing=db.query<{id:number},[string,number,number]>('SELECT id FROM matter_report_outbox WHERE matter_id=? AND comparison_position=? AND comparison_revision=?').get(report.matterId,position,revision)
+          if(existing)return existing.id
+          return db.query<{id:number},[string,string,string|null,string,number,number,number,number]>(`INSERT INTO matter_report_outbox
+            (matter_id,origin_matter_id,origin_message_id,text,next_at,created_at,comparison_position,comparison_revision)
+            VALUES(?,?,?,?,?,?,?,?) RETURNING id`).get(report.matterId,report.originMatterId,report.originMessageId,report.text,now,now,position,revision)!.id
+        })()
+      }
       const existing = stmtPendingIdByMatter.get(report.matterId)
       if (existing) {
         stmtMergeById.run(report.text, ref, now, existing.id)

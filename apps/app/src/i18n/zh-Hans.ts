@@ -416,6 +416,7 @@ const zh: Record<keyof typeof en, string> = {
   'progress.records': '记录',
   'progress.parallel': '第 {position} 棒 · {count} 位并行',
   'progress.parallelNotReady': '等并行组结束后，再选一个有工作区的版本合回。',
+  'progress.parallelSnapshotChanged': '这版的提交变了，请看过新对照后再选一次。',
   'progress.parallelChosen': '已选',
   'progress.agent.waiting': '等你回答',
   'progress.agent.queued': '排队',

@@ -687,7 +687,8 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(detail.parallelGroups?.[0]?.members.map(m=>m.status),JSON.stringify({outcomes,replies})).toEqual(['completed','completed'])
     expect(existsSync(join(repo,'parallel-claude.txt'))).toBe(false)
     expect(d.query<{state:string}>('SELECT state FROM matter_plan_legs WHERE matter_id=? AND position=2',id)[0]?.state).toBe('pending')
-    d.sendText(d.owner,'用 Claude 那版')
+    const chosen=detail.parallelGroups![0]!.members.find(member=>member.executor==='claude')!
+    d.sendText(d.owner,`用 Claude 那版 任务 ${chosen.taskId}`)
     await expect.poll(()=>d.query<{state:string}>('SELECT state FROM matter_plans WHERE matter_id=?',id)[0]?.state,{timeout:30_000}).toBe('done')
     expect(readFileSync(join(repo,'parallel-claude.txt'),'utf8')).toBe('claude candidate\n')
     expect(existsSync(join(repo,'parallel-codex.txt'))).toBe(false)

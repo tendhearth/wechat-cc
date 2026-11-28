@@ -1736,12 +1736,17 @@ it('v124 adds parallel members without changing a v123 sequential plan',()=>{
     expect(()=>insert.run(1,2,null,null,1)).toThrow()
     expect(()=>insert.run(2,1,null,null,0)).toThrow()
     expect(()=>insert.run(1,4,null,null,0)).toThrow()
+    db.exec(`INSERT INTO matter_plan_comparisons(matter_id,position,text) VALUES('12345678',1,'对照');
+      INSERT INTO matter_plan_choice_receipts VALUES('receipt-1','hash','87654321','已合回');`)
     migrations[123]!(db)
-    expect(db.query('SELECT task_id,run_id,compared FROM matter_plan_candidates').all()).toEqual([{task_id:'87654321',run_id:'candidate-1',compared:0}])
+    expect(db.query('SELECT task_id,run_id FROM matter_plan_candidates').all()).toEqual([{task_id:'87654321',run_id:'candidate-1'}])
+    expect(db.query('SELECT revision,text,enqueued,dispatch_pending FROM matter_plan_comparisons').all()).toEqual([{revision:1,text:'对照',enqueued:0,dispatch_pending:0}])
+    expect(db.query('SELECT task_id,reply FROM matter_plan_choice_receipts').all()).toEqual([{task_id:'87654321',reply:'已合回'}])
     db.exec("DELETE FROM matters WHERE id='87654321'")
     expect(db.query('SELECT task_id FROM matter_plan_candidates').all()).toEqual([{task_id:null}])
     db.exec("DELETE FROM matters WHERE id='12345678'")
     expect(db.query('SELECT * FROM matter_plan_candidates').all()).toEqual([])
+    expect(db.query('SELECT * FROM matter_plan_comparisons').all()).toEqual([])
     expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
   }finally{db.close()}
 })

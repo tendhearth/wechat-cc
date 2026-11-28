@@ -98,10 +98,10 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
       return {context:context??'',...(!context?{message:'没有相关话题'}:{})}
     },
     matterNotes(key:string|undefined,requested?:string,q?:MatterNotesQuery){
-      const id=store.ledger.bound(key,requested),page=store.ledger.page(id,q)
-      if(key?.startsWith('workbench/'))page.notes=store.ledger.forExecutor(key.slice('workbench/'.length),page.notes)
+      const id=store.ledger.bound(key,requested)
+      const runId=key?.startsWith('workbench/')?state.runsByTask.get(key.slice('workbench/'.length))?.ledgerRunId:undefined
       if(key?.startsWith('terminal-participation/'))store.ledger.terminals.connected(key)
-      return page
+      return store.ledger.page(id,q,{runId})
     },
     matterNote(key:string|undefined,text:string){
       if(key?.startsWith('terminal-participation/')){

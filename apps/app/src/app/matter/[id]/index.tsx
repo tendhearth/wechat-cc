@@ -207,6 +207,7 @@ export default function Matter() {
     if (r === 'ok') setWtNote(t(lang, action === 'commit' ? 'progress.wtCommitted' : action === 'merge' ? (mergedNow ? 'progress.wtMerged' : 'progress.wtNothingToMerge') : action === 'reopen' ? 'progress.wtReopened' : 'progress.wtRemoved'))
     else if (err === 'worktree_dirty') setWtNote(t(lang, 'progress.wtDirty'))
     else if (err === 'parallel_not_ready') setWtNote(t(lang, 'progress.parallelNotReady'))
+    else if (err === 'parallel_snapshot_changed') setWtNote(t(lang, 'progress.parallelSnapshotChanged'))
     else if (err === 'worktree_uncommitted') setWtNote(t(lang, 'progress.wtUncommitted'))
     else if (err === 'merge_manual') setWtNote(t(lang, 'progress.wtMergeManual'))
     else if (err === 'project_busy') setWtNote(t(lang, 'progress.wtProjectBusy'))

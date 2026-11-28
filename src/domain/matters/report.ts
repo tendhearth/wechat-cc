@@ -12,6 +12,8 @@ import type { Matter } from '../../ports/matters'
  * 设计:.superpowers/sdd/2026-09-23-delegation-report/task-3-brief.md。
  */
 
+export interface ComparisonReportKey {position:number;revision:number}
+
 export interface PendingReport {
   matterId: string
   originMatterId: string
@@ -100,6 +102,7 @@ export function shouldDisturb(input: {lastSeenAt: number | null; now: number}): 
 export interface ReportSink {
   /** 接力的一句话回原对话，仍经同一 outbox / SpeechPolicy。 */
   enqueueRelay?(matterId:string,text:string):void
+  enqueueComparison?(matterId:string,text:string,key:ComparisonReportKey):Promise<void>
   /**
    * `turn` 是这一轮的 `Active.turnSeq`;`body`(可选)是并进回报文案的
    * 答复正文——见 renderReport 的文档注释,两者都是用来让相邻两轮的回

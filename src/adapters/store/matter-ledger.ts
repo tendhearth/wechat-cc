@@ -53,6 +53,17 @@ export function makeMatterLedger(db:Db,now=()=>Date.now()){
     db.query('INSERT INTO matter_notes(matter_id,run_id,author,kind,text,created_at,entry_key) VALUES(?,?,?,?,?,?,?) ON CONFLICT(matter_id,entry_key) DO '+(replace?'UPDATE SET text=excluded.text':'NOTHING')).run(matterId,runId,author,kind,short(ledgerText(text),LEDGER_NOTE_MAX),now(),key??null)
     })()
   }
+  function forExecutor(matterId:string,runId:string|undefined,rows:readonly MatterNote[]):MatterNote[]{
+    const members=plans.candidates(matterId)
+    if(!members.length)return [...rows]
+    const own=members.find(member=>member.runId===runId)
+    if(own)return rows.filter(note=>(note.runId===null&&note.kind==='plan'&&note.text!==RETENTION_NOTICE)||(note.runId===runId&&note.kind==='note'))
+    const position=plans.get(matterId)?.legs.find(leg=>leg.runId===runId)?.position
+    return rows.filter(note=>{
+      const member=members.find(candidate=>candidate.runId!==null&&candidate.runId===note.runId)
+      return !member||member.chosen&&position!==undefined&&position>member.position
+    })
+  }
   return {
     notes,agents,terminals,
     latestForTask(taskId:string):string|undefined{
@@ -62,17 +73,7 @@ export function makeMatterLedger(db:Db,now=()=>Date.now()){
         WHERE a.matter_id=? AND EXISTS(SELECT 1 FROM matter_turns t WHERE t.matter_id=? AND t.run_id=a.run_id)
         ORDER BY a.position DESC LIMIT 1`).get(id,taskId)?.runId
     },
-    forExecutor<T extends MatterNote>(taskId:string,rows:readonly T[]):T[]{
-      const id=plans.root(taskId)
-      const peers=plans.candidates(id).filter(c=>c.taskId&&c.taskId!==taskId&&!c.chosen)
-      if(!peers.length)return [...rows]
-      const paths=peers.flatMap(c=>{
-        const row=db.query<{root:string},[string]>('SELECT root FROM workbench_worktrees WHERE task_id=?').get(c.taskId!)
-        return row?[row.root]:[]
-      })
-      return rows.filter(note=>note.kind!=='artifact'||!peers.some(c=>c.runId===note.runId))
-        .map(note=>({...note,text:paths.reduce((text,path)=>text.replaceAll(path,'[独立工作区]'),note.text)}))
-    },
+    forExecutor,
     projectedAgents(id:string):MatterAgent[]{
       const plan=plans.get(id),members=plans.candidates(id)
       const actual=agents(id).filter(a=>!members.some(m=>m.runId===a.runId)).map(a=>{
@@ -89,16 +90,20 @@ export function makeMatterLedger(db:Db,now=()=>Date.now()){
     },
     needsInjection:(runId:string)=>!!db.query('SELECT 1 FROM matter_agents WHERE run_id=? AND injected_at IS NULL').get(runId),
     injected(runId:string){db.query('UPDATE matter_agents SET injected_at=COALESCE(injected_at,?) WHERE run_id=?').run(now(),runId)},
-    page(id:string,q:MatterNotesQuery={}):MatterNotesPage {
+    page(id:string,q:MatterNotesQuery={},executor?:{runId?:string}):MatterNotesPage {
       if(q.runId!==undefined&&(typeof q.runId!=='string'||!q.runId.trim()||q.runId.length>200)||q.before!==undefined&&(!Number.isSafeInteger(q.before)||q.before<1)||q.limit!==undefined&&(!Number.isSafeInteger(q.limit)||q.limit<1||q.limit>50))throw Error('invalid_matter_notes_query')
       const run=q.runId??null,limit=q.limit??20
       const columns='id,matter_id AS matterId,run_id AS runId,author,kind,text,created_at AS createdAt'
-      const scope='matter_id=? AND (? IS NULL OR run_id=?)'
-      // Pin the latest matching plan. Earlier plans remain reachable through the cursor.
-      const plan=db.query<MatterNote,[string,string|null,string|null]>(`SELECT ${columns} FROM matter_notes WHERE ${scope} AND kind='plan' AND COALESCE(entry_key,'')!='system:retention' ORDER BY id DESC LIMIT 1`).get(id,run,run)
-      const rows=db.query<MatterNote,[string,string|null,string|null,number,number,number]>(`SELECT ${columns} FROM matter_notes WHERE ${scope} AND id<? AND id!=? AND COALESCE(entry_key,'')!='system:retention' ORDER BY id DESC LIMIT ?`).all(id,run,run,q.before??Number.MAX_SAFE_INTEGER,plan?.id??-1,limit+1)
-      const notice=db.query<{text:string},[string]>("SELECT text FROM matter_notes WHERE matter_id=? AND entry_key='system:retention'").get(id)
-      const page:MatterNotesPage={notes:plan?[plan]:[],notesTotal:db.query<{n:number},[string]>('SELECT COUNT(*) AS n FROM matter_notes WHERE matter_id=?').get(id)!.n,matchedTotal:db.query<{n:number},[string,string|null,string|null]>(`SELECT COUNT(*) AS n FROM matter_notes WHERE ${scope}`).get(id,run,run)!.n,nextBefore:null,truncated:false,...(notice?{retentionNotice:notice.text}:{})}
+      const visible=executor?JSON.stringify(forExecutor(id,executor.runId,notes(id)).map(note=>note.id)):null
+      const scope='matter_id=? AND (? IS NULL OR id IN (SELECT value FROM json_each(?)))'
+      const matching=scope+' AND (? IS NULL OR run_id=?)'
+      const scoped=[id,visible,visible] as const
+      const args=[...scoped,run,run] as const
+      // Pin the latest visible, matching plan. Earlier plans remain reachable through the cursor.
+      const plan=db.query<MatterNote,[...typeof args]>(`SELECT ${columns} FROM matter_notes WHERE ${matching} AND kind='plan' AND COALESCE(entry_key,'')!='system:retention' ORDER BY id DESC LIMIT 1`).get(...args)
+      const rows=db.query<MatterNote,[...typeof args,number,number,number]>(`SELECT ${columns} FROM matter_notes WHERE ${matching} AND id<? AND id!=? AND COALESCE(entry_key,'')!='system:retention' ORDER BY id DESC LIMIT ?`).all(...args,q.before??Number.MAX_SAFE_INTEGER,plan?.id??-1,limit+1)
+      const notice=db.query<{text:string},[...typeof scoped]>(`SELECT text FROM matter_notes WHERE ${scope} AND entry_key='system:retention'`).get(...scoped)
+      const page:MatterNotesPage={notes:plan?[plan]:[],notesTotal:db.query<{n:number},[...typeof scoped]>(`SELECT COUNT(*) AS n FROM matter_notes WHERE ${scope}`).get(...scoped)!.n,matchedTotal:db.query<{n:number},[...typeof args]>(`SELECT COUNT(*) AS n FROM matter_notes WHERE ${matching}`).get(...args)!.n,nextBefore:null,truncated:false,...(notice?{retentionNotice:notice.text}:{})}
       let taken=0
       for(const row of rows.slice(0,limit)){
         // Budget the serialized response, including escaping and pagination metadata.

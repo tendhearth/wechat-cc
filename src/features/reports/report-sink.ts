@@ -40,6 +40,11 @@ export interface ReportSinkDeps {
 
 export function makeReportSink(deps: ReportSinkDeps): ReportSink {
   return {
+    async enqueueComparison(matterId,text,key){
+      const matter=deps.matters.get(matterId)
+      if(!matter?.originMatterId||!deps.notificationsEnabled(matterId))return
+      await deps.outbox.insert({matterId,originMatterId:matter.originMatterId,originMessageId:matter.originMessageId,text},deps.now?.()??Date.now(),null,key)
+    },
     enqueueRelay(matterId,text){
       const matter=deps.matters.get(matterId)
       if(!matter?.originMatterId||!deps.notificationsEnabled(matterId))return

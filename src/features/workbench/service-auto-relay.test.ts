@@ -21,6 +21,8 @@ import {scriptedOpenAiModel,scriptedMcpTools} from '../../test-support/executors
 import {collectTurn} from '../../ports/agent-provider'
 import {MatterPlanRequest} from '../../../packages/protocol/src/desktop-api'
 import {prepareChatApprovalPrompt} from '../../adapters/executors/chat-approval'
+import {makeReportOutboxStore} from '../reports/outbox'
+import {makeReportSink} from '../reports/report-sink'
 import {TIER_PROFILES} from '../../domain/user-tier'
 
 vi.setConfig({testTimeout:30_000})
@@ -29,20 +31,20 @@ afterEach(async()=>{for(const cleanup of cleanups.splice(0))await cleanup()})
 function setup(retainedFirst:boolean|'all'=false,signals=true,extra:Partial<Parameters<typeof makeWorkbenchService>[0]>={}){
   const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-auto-relay-'))),project=join(root,'project'),stateDir=join(root,'state');mkdirSync(project);mkdirSync(stateDir)
   const db=openTestDb(),store=makeWorkbenchStore(db),matters=makeMatterStore(db),registry=createProviderRegistry()
-  const calls:Array<{executor:string;context:SpawnContext;text:string;queue:AsyncQueue<AgentEvent>;idle?:()=>void}>=[],notices:string[]=[],ordinaryReports:string[]=[],order:string[]=[]
+  const calls:Array<{executor:string;context:SpawnContext;text:string;queue:AsyncQueue<AgentEvent>;idle?:(mode?:AgentRuntimeSnapshot['input'])=>void}>=[],notices:string[]=[],ordinaryReports:string[]=[],order:string[]=[]
   let nextBlock:null|'quota'|'refused'|'ack'=null
   for(const executor of ['codex','claude','openai'])registry.register(executor,{async spawn(_p,context){
     const queue=new AsyncQueue<AgentEvent>()
     order.push(`spawn:${executor}`)
     if(retainedFirst&&executor==='codex'&&(retainedFirst==='all'||!calls.length)){
       let snapshot:AgentRuntimeSnapshot={retained:true,foreground:'running',backgroundCount:0,input:'send'}
-      return {workbenchRuntime:{events:queue.iterable(),snapshot:()=>snapshot,start(text){calls.push({executor,context,text,queue,idle:()=>{snapshot={...snapshot,foreground:'idle'}}})},async submit(_id,text){snapshot={...snapshot,foreground:'running'};calls.push({executor,context,text,queue,idle:()=>{snapshot={...snapshot,foreground:'idle'}}})}},async *dispatch(){},async close(){order.push(`close:${executor}`);queue.end()}}
+      return {workbenchRuntime:{events:queue.iterable(),snapshot:()=>snapshot,start(text){calls.push({executor,context,text,queue,idle:(input=snapshot.input)=>{snapshot={...snapshot,foreground:'idle',input}}})},async submit(_id,text){snapshot={...snapshot,foreground:'running'};calls.push({executor,context,text,queue,idle:(input=snapshot.input)=>{snapshot={...snapshot,foreground:'idle',input}}})}},async *dispatch(){},async close(){order.push(`close:${executor}`);queue.end()}}
     }
     return {dispatch(text){calls.push({executor,context,text,queue});return queue.iterable()},async close(){order.push(`close:${executor}`);queue.end()}}
   }},{displayName:executor,canResume:()=>executor!=='openai',workbench:executor==='openai'?MANAGED_API_CAPABILITIES:MANAGED_NATIVE_CAPABILITIES})
   const opts={store,registry,stateDir,managedWorkspaceRoot:join(root,'Tasks'),ownerChatId:()=>'owner',matters,
     usage:(id:string):UsageSnapshot|null=>id==='claude'&&nextBlock==='quota'?{providerId:'claude',plan:null,fetchedAt:Date.now(),exhausted:true,windows:[{name:'5h',usedPercent:100,resetsAt:Date.now()+3600_000,durationMins:300}]}:null,
-    ...(signals?{refusal:(id:string)=>id==='claude'&&nextBlock==='refused'?{code:'refused',since:'2026-11-14T00:00:00Z'}:null}:{}),executionConflict:()=>false,reports:{enqueue(id:string){ordinaryReports.push(id)},enqueueRelay(_id:string,text:string){notices.push(text)}}}
+    ...(signals?{refusal:(id:string)=>id==='claude'&&nextBlock==='refused'?{code:'refused',since:'2026-11-14T00:00:00Z'}:null}:{}),executionConflict:()=>false,reports:{enqueue(id:string){ordinaryReports.push(id)},enqueueRelay(_id:string,text:string){notices.push(text)},async enqueueComparison(_id:string,text:string){notices.push(text)}}}
   Object.assign(opts,extra)
   let service=makeWorkbenchService(opts)
   cleanups.push(async()=>{await service.shutdown();db.close();removeTempDir(root)})
@@ -952,10 +954,13 @@ it.each([
   expect(f.store.worktrees.get(left.id)?.start?.sha).toBe(f.store.worktrees.get(right.id)?.start?.sha)
   expect(f.service.matterNote(`workbench/${left.id}`,'Codex 专属备注')).toEqual({ok:true})
   expect(f.service.matterNote(`workbench/${right.id}`,'Claude 专属备注')).toEqual({ok:true})
-  expect(f.service.matterNotes(`workbench/${right.id}`,id).notes).toEqual(expect.arrayContaining([
-    expect.objectContaining({author:'codex',text:'Codex 专属备注'}),
+  const privateNotes=f.service.matterNotes(`workbench/${right.id}`,id)
+  expect(privateNotes.notes).toEqual(expect.arrayContaining([
+    expect.objectContaining({kind:'plan',text:expect.stringContaining('做候选版本')}),
     expect.objectContaining({author:'claude',text:'Claude 专属备注'}),
   ]))
+  expect(privateNotes.notes).not.toEqual(expect.arrayContaining([expect.objectContaining({text:'Codex 专属备注'})]))
+  expect(f.service.detail(id).notes).toEqual(expect.arrayContaining([expect.objectContaining({text:'Codex 专属备注'})]))
   expect(()=>f.service.matterNotes(`workbench/${right.id}`,'deadbeef')).toThrow('matter_scope_mismatch')
   const leftIndex=f.calls.findIndex(c=>c.executor==='codex'),rightIndex=f.calls.findIndex(c=>c.executor==='claude')
   writeFileSync(join(left.path,'codex.txt'),'left\n')
@@ -984,7 +989,7 @@ it.each([
   expect(existsSync(join(f.project,'claude.txt'))).toBe(false)
   expect(f.calls).toHaveLength(2)
   if(failure){
-    expect(await f.service.handleWechat('owner','用 Codex 那版')).toContain('已合进项目')
+    expect(await f.service.handleWechat('owner',`用 Codex 那版 任务 ${left.id}`)).toContain('已合进项目')
     expect(existsSync(join(f.project,'codex.txt'))).toBe(true)
     expect(existsSync(join(f.project,'claude.txt'))).toBe(false)
   }
@@ -992,11 +997,11 @@ it.each([
   await expect(f.service.handleWechat('visitor','用 Claude 那版')).resolves.toBeNull()
   const pending=join(right.path,'still-uncommitted.txt')
   writeFileSync(pending,'owner edit\n')
-  expect(await f.service.handleWechat('owner','用 Claude 那版')).toContain('还有没提交的改动')
+  expect(await f.service.handleWechat('owner',`用 Claude 那版 任务 ${right.id}`)).toContain('还有没提交的改动')
   expect(f.store.plans.candidates(id,1).some(member=>member.chosen)).toBe(false)
   expect(f.calls).toHaveLength(2)
   unlinkSync(pending)
-  expect(await f.service.handleWechat('owner','用 Claude 那版')).toContain('已合进项目')
+  expect(await f.service.handleWechat('owner',`用 Claude 那版 任务 ${right.id}`)).toContain('已合进项目')
   expect(existsSync(join(f.project,'claude.txt'))).toBe(true)
   expect(existsSync(join(f.project,'codex.txt'))).toBe(false)
   expect(existsSync(join(left.path,'codex.txt'))).toBe(true)
@@ -1042,4 +1047,286 @@ it('a parallel leg after a sequential leg forks its committed work from the same
   }
   for(let i=1;i<3;i++)await f.finish(i,'状态：做完')
   await expect.poll(()=>f.notices.some(text=>text.includes('第 2 棒的并行对照'))).toBe(true)
+})
+
+const parallelGit=(cwd:string,...args:string[])=>execFileSync('git',['-c','user.email=test@example.invalid','-c','user.name=Test',...args],{cwd,stdio:'pipe'}).toString().trim()
+const parallelCaller={chatId:'owner',provider:'codex'}
+const parallelContext={scope:'parallel-regression'}
+function parallelFixture(retained=false,extra:Partial<Parameters<typeof makeWorkbenchService>[0]>={}){
+  const f=setup(retained?'all':false,true,{planConversation:()=>parallelContext,...extra})
+  parallelGit(f.project,'init','-q','-b','main')
+  writeFileSync(join(f.project,'README.md'),'baseline\n')
+  parallelGit(f.project,'add','.');parallelGit(f.project,'commit','-qm','baseline')
+  f.service.addProject({path:f.project,providerId:'codex'})
+  return f
+}
+async function startParallel(f:ReturnType<typeof parallelFixture>,title:string,legs:typeof ParallelPlanLegs=ParallelPlanLegs){
+  const input={requestId:randomUUID(),project:f.service.projects()[0]!.id,title,legs}
+  f.service.noteMatterApproval('mcp__wechat__matter_plan',input,parallelCaller)
+  const {receipt}=await f.service.matterPlan(input,parallelContext),id=receipt.matterId
+  await expect.poll(()=>f.store.plans.candidates(id,1).every(m=>m.taskId&&f.calls.some(c=>c.context.workbenchTaskId===m.taskId))).toBe(true)
+  const [left,right]=f.store.plans.candidates(id,1).map(m=>f.store.get(m.taskId!))
+  return {id,left:left!,right:right!}
+}
+const ParallelPlanLegs:Array<{parallel:string[];brief:string}|{executor:string;brief:string}>=[{parallel:['codex','claude'],brief:'两位的共同要求'}]
+const callFor=(f:ReturnType<typeof parallelFixture>,id:string)=>f.calls.findIndex(c=>c.context.workbenchTaskId===id)
+const wechatIdentity=(focusTaskId?:string)=>({accountId:'test-account',userId:'owner',msgId:randomUUID(),createTimeMs:10,focusTaskId})
+
+async function finishParallel(f:ReturnType<typeof parallelFixture>,title:string,legs?:typeof ParallelPlanLegs){
+  const group=await startParallel(f,title,legs)
+  await f.finish(callFor(f,group.left.id),'状态：做完')
+  await f.finish(callFor(f,group.right.id),'状态：做完')
+  await expect.poll(()=>f.store.plans.comparison(group.id,1)?.text).toContain('并行对照')
+  return group
+}
+
+it('asks for a specific comparison and replays the original choice receipt after focus changes',async()=>{
+  const f=parallelFixture()
+  const a=await startParallel(f,'未出对照的甲')
+  const b=await finishParallel(f,'已出对照的乙')
+  const command='用 Codex 那版',unknown=wechatIdentity()
+  const clarification=await f.service.handleWechat('owner',command,unknown)
+  // Inspect persisted state before checking wording: the wrong repository could
+  // already have been adopted even when the returned message was misleading.
+  expect(f.store.plans.candidates(b.id,1).some(m=>m.chosen)).toBe(false)
+  expect(clarification).toContain('哪份对照')
+  expect(await f.service.handleWechat('owner',command,wechatIdentity(a.id))).toContain('等并行组结束')
+  const delivery=wechatIdentity(b.id)
+  const reply=await f.service.handleWechat('owner',command,delivery)
+  expect(reply).toContain(b.left.id)
+  expect(f.store.plans.candidates(b.id,1)[0]?.chosen).toBe(true)
+  const c=await startParallel(f,'后来才可选的丙')
+  writeFileSync(join(c.left.path,'must-not-merge.txt'),'third matter\n')
+  parallelGit(c.left.path,'add','.');parallelGit(c.left.path,'commit','-qm','third version')
+  await f.finish(callFor(f,c.left.id),'状态：做完')
+  await f.finish(callFor(f,c.right.id),'状态：做完')
+  await expect.poll(()=>f.store.plans.comparison(c.id,1)?.text).toContain('must-not-merge.txt')
+  await f.restart()
+  expect(await f.service.handleWechat('owner',command,{...delivery,focusTaskId:c.id})).toBe(reply)
+  expect(await f.service.handleWechat('owner',command,{...unknown,focusTaskId:c.id})).toBe(clarification)
+  expect(f.store.plans.candidates(c.id,1).some(m=>m.chosen)).toBe(false)
+  expect(existsSync(join(f.project,'must-not-merge.txt'))).toBe(false)
+  expect(f.db.query<{task_id:string|null},[]>('SELECT task_id FROM matter_plan_choice_receipts ORDER BY rowid').all().map(row=>row.task_id)).toEqual([null,a.left.id,b.left.id])
+})
+
+it('projects ledger rows by baton for both the model opening and matter_notes',async()=>{
+  const f=parallelFixture()
+  const a=await startParallel(f,'成员记录投影',[...ParallelPlanLegs,{executor:'openai',brief:'接着做'}])
+  const leftRun=f.store.plans.candidates(a.id,1)[0]!.runId!
+  const leftBranch=f.store.worktrees.get(a.left.id)!.branch
+  const leftSha=parallelGit(a.left.path,'rev-parse','HEAD')
+  const peerNote=`PEER_BRANCH ${leftBranch} ${leftSha} relative/peer.txt`
+  f.service.matterNote(`workbench/${a.right.id}`,'OWN_NOTE')
+  writeFileSync(join(a.left.path,'peer.txt'),'peer\n')
+  parallelGit(a.left.path,'add','.');parallelGit(a.left.path,'commit','-qm','peer')
+  await f.finish(callFor(f,a.left.id),`${peerNote}\n状态：做完`)
+  await expect.poll(()=>f.store.plans.candidates(a.id,1)[0]?.status).toBe('completed')
+  const read=(q?:{runId?:string;limit?:number})=>f.service.matterNotes(`workbench/${a.right.id}`,a.id,q)
+  expect(read().notes.map(n=>n.text).join('\n')).toContain('OWN_NOTE')
+  expect(JSON.stringify(read())).not.toMatch(/PEER_BRANCH|peer\.txt|工作区/)
+  expect(read({runId:leftRun,limit:1})).toMatchObject({notes:[],matchedTotal:0,nextBefore:null,truncated:false})
+  expect(JSON.stringify(f.service.detail(a.id).notes)).toContain(peerNote)
+  await f.finish(callFor(f,a.right.id),'状态：做完')
+  await expect.poll(()=>f.store.plans.comparison(a.id,1)?.text).toBeTruthy()
+  await f.service.worktreeAction(a.right.id,'merge')
+  await expect.poll(()=>f.calls.at(-1)?.executor).toBe('openai')
+  const next=f.calls.at(-1)!
+  expect(next.text).toContain('OWN_NOTE')
+  expect(next.text).toContain(a.right.path)
+  expect(next.text).not.toMatch(/PEER_BRANCH|peer\.txt/)
+  expect(JSON.stringify(f.service.matterNotes(`workbench/${a.right.id}`,a.id))).not.toContain('PEER_BRANCH')
+  await f.finish(f.calls.length-1,'状态：做完')
+})
+
+it('shares parallel wrap-ups and output summaries with the existing scoped token and responder',async()=>{
+  const f=parallelFixture()
+  const a=await startParallel(f,'分享的版本')
+  const {token}=f.service.shareCreate(a.id,'访客')
+  let prompt=''
+  f.service.shareResponder({async eval(input){prompt=input;return null},tellOwner(){}})
+  writeFileSync(join(a.left.path,'share-left.txt'),'left\n')
+  parallelGit(a.left.path,'add','.');parallelGit(a.left.path,'commit','-qm','left')
+  const sha=parallelGit(a.left.path,'rev-parse','HEAD')
+  await f.finish(callFor(f,a.left.id),'LEFT_SHARE_WRAPUP\n状态：做完')
+  await f.finish(callFor(f,a.right.id),'RIGHT_SHARE_WRAPUP\n状态：做完')
+  await expect.poll(()=>f.store.plans.comparison(a.id,1)?.text).toBeTruthy()
+  const guest=f.service.shareView(token)
+  expect(guest.ok).toBe(true)
+  if(!guest.ok)throw Error('share unavailable')
+  expect(guest.matter.notes).toEqual(expect.arrayContaining([
+    expect.objectContaining({kind:'note',text:expect.stringContaining('LEFT_SHARE_WRAPUP')}),
+    expect.objectContaining({kind:'note',text:expect.stringContaining('RIGHT_SHARE_WRAPUP')}),
+    expect.objectContaining({kind:'artifact',text:'1 个文件 · share-left.txt'}),
+  ]))
+  expect(JSON.stringify(guest)).not.toContain(sha)
+  expect(JSON.stringify(guest)).not.toContain(a.left.path)
+  expect(JSON.stringify(guest)).not.toContain('RAW_TRANSCRIPT_CANARY')
+  expect(f.service.shareSay(token,'有哪些版本？')).toEqual({ok:true})
+  await expect.poll(()=>prompt).toContain('RIGHT_SHARE_WRAPUP')
+  expect(prompt).toContain('share-left.txt')
+  expect(prompt).not.toContain(sha)
+  expect(prompt).not.toContain('RAW_TRANSCRIPT_CANARY')
+})
+
+it('reopens a quiet comparison when input queues and rejects a commit outside the published snapshot',async()=>{
+  const f=parallelFixture(true)
+  const a=await finishParallel(f,'安静的版本')
+  const original=f.store.plans.comparison(a.id,1)!
+  const left=f.calls[callFor(f,a.left.id)]!
+  left.idle!('queue')
+  const runId=f.service.detail(a.left.id).runId!,requestId=randomUUID()
+  expect(await f.service.submitInput(a.left.id,{runId,requestId,text:'再跑一次测试'})).toMatchObject({status:'pending'})
+  expect(f.store.plans.candidates(a.id,1)[0]).toMatchObject({status:'running',result:null})
+  expect(f.store.plans.comparison(a.id,1)).toEqual({revision:original.revision+1,text:null})
+  await expect(f.service.worktreeAction(a.right.id,'merge')).rejects.toThrow('matter_parallel_not_ready')
+  // Another idle result must not turn a pending supplement into a completed version.
+  left.queue.push({kind:'result',sessionId:f.store.get(a.left.id).sessionId!,numTurns:1,durationMs:1})
+  await expect.poll(()=>f.service.detail(a.left.id).runtime?.foreground).toBe('idle')
+  expect(f.store.plans.comparison(a.id,1)?.text).toBeNull()
+  f.service.withdrawInput(a.left.id,requestId)
+  await expect.poll(()=>f.store.plans.comparison(a.id,1)?.text).toContain('对照 2')
+  writeFileSync(join(a.right.path,'new-candidate.txt'),'new snapshot\n')
+  parallelGit(a.right.path,'add','.');parallelGit(a.right.path,'commit','-qm','owner amended candidate')
+  await expect(f.service.worktreeAction(a.right.id,'merge')).rejects.toThrow('matter_parallel_snapshot_changed')
+  expect(existsSync(join(f.project,'new-candidate.txt'))).toBe(false)
+  await expect.poll(()=>f.store.plans.comparison(a.id,1)?.text).toContain('new-candidate.txt')
+  expect(await f.service.handleWechat('owner',`用 Claude 那版 任务 ${a.right.id} 对照 2`,wechatIdentity())).toContain('请再选一次')
+  await expect(f.service.worktreeAction(a.right.id,'merge')).resolves.toMatchObject({merged:true})
+})
+
+it('blocks a quiet member with an already pending supplement before any comparison is published',async()=>{
+  const f=parallelFixture(true)
+  const a=await startParallel(f,'未投递的补充')
+  const left=f.calls[callFor(f,a.left.id)]!
+  left.idle!('queue')
+  const runId=f.service.detail(a.left.id).runId!,requestId=randomUUID()
+  expect(await f.service.submitInput(a.left.id,{runId,requestId,text:'先别结束'})).toMatchObject({status:'pending'})
+  await f.finish(callFor(f,a.left.id),'状态：做完')
+  await f.finish(callFor(f,a.right.id),'状态：做完')
+  await expect.poll(()=>f.store.plans.candidates(a.id,1)[1]?.status).toBe('completed')
+  expect(f.store.plans.candidates(a.id,1)[0]?.status).toBe('running')
+  expect(f.store.plans.comparison(a.id,1)).toBeNull()
+  await expect(f.service.worktreeAction(a.right.id,'merge')).rejects.toThrow('matter_parallel_not_ready')
+  await f.service.cancel(a.left.id,runId)
+  await expect.poll(()=>f.store.plans.candidates(a.id,1)[0]?.status).toBe('cancelled')
+  expect(f.store.liveInputs.get(requestId)?.status).toBe('held')
+  await expect.poll(()=>f.store.plans.comparison(a.id,1)?.text).toContain('已停')
+})
+
+it.each(['resume accepted','resume unavailable'] as const)('settles or continues a closed candidate when a queued supplement is %s',async path=>{
+  const f=parallelFixture()
+  const a=await startParallel(f,'关会话的补充')
+  const requestId=randomUUID(),rightIndex=callFor(f,a.right.id)
+  const runId=f.service.detail(a.right.id).runId!
+  expect(await f.service.submitInput(a.right.id,{runId,requestId,text:'把临时文件删掉'})).toMatchObject({status:'pending'})
+  // First turn's addition will be undone by a successful second turn.
+  const change=join(a.right.path,'undone.txt')
+  writeFileSync(change,'temporary\n')
+  parallelGit(a.right.path,'add','.');parallelGit(a.right.path,'commit','-qm','add file')
+  if(path==='resume unavailable')f.registry.get('claude')!.opts.canResume=()=>false
+  await f.finish(callFor(f,a.left.id),'状态：做完')
+  await f.finish(rightIndex,'状态：做完')
+  if(path==='resume accepted'){
+    await expect.poll(()=>f.calls.length).toBe(3)
+    expect(f.calls[2]!.context.workbenchTaskId).toBe(a.right.id)
+    expect(f.calls[2]!.context.resumeSessionId).toBe(`session-${rightIndex}`)
+    expect(f.store.plans.candidates(a.id,1)[1]?.status).toBe('running')
+    expect(f.store.plans.comparison(a.id,1)).toBeNull()
+    unlinkSync(change)
+    parallelGit(a.right.path,'add','.');parallelGit(a.right.path,'commit','-qm','undo file')
+    await f.finish(2,'状态：做完')
+    await expect.poll(()=>f.store.plans.comparison(a.id,1)?.text).toContain('0 个文件，+0 / −0 行')
+    expect(f.store.plans.comparison(a.id,1)?.text).not.toContain('undone.txt')
+    expect(f.store.liveInputs.get(requestId)?.status).toBe('delivered')
+  }else{
+    await expect.poll(()=>f.store.liveInputs.get(requestId)?.status).toBe('held')
+    await expect.poll(()=>f.store.plans.candidates(a.id,1)[1]?.status).toBe('failed')
+    expect(f.calls).toHaveLength(2)
+    expect(f.store.plans.comparison(a.id,1)?.text).toContain('没做成')
+  }
+})
+
+it('marks a comparison partial when the candidate has work outside its committed snapshot',async()=>{
+  const f=parallelFixture()
+  const a=await startParallel(f,'有未提交内容')
+  writeFileSync(join(a.left.path,'untracked.txt'),'untracked\n')
+  await f.finish(callFor(f,a.left.id),'状态：做完')
+  await f.finish(callFor(f,a.right.id),'状态：做完')
+  await expect.poll(()=>f.store.plans.comparison(a.id,1)?.text).toContain('部分统计')
+  await expect(f.service.worktreeAction(a.left.id,'merge')).rejects.toThrow('worktree_uncommitted')
+})
+
+it('reconciles a lost comparison enqueue on restart and keeps the comparison alongside relay progress',async()=>{
+  const f=parallelFixture(false,{reports:{enqueue(){},async enqueueComparison(){throw Error('synthetic before outbox insert')}}})
+  const a=await finishParallel(f,'重启补发对照')
+  const outbox=makeReportOutboxStore(f.db)
+  const reports=makeReportSink({matters:f.matters,outbox,taskTitle:id=>f.store.get(id).title,artifactCount:()=>0,notificationsEnabled:()=>true})
+  expect(await outbox.listDue(Date.now())).toEqual([])
+  expect(f.store.plans.comparisonIntents('owner')).toEqual([expect.objectContaining({matterId:a.id,position:1})])
+  await f.restart({reports})
+  await expect.poll(()=>f.store.plans.comparisonIntents('owner')).toEqual([])
+  reports.enqueueRelay!(a.id,'后面接力的进展')
+  const read=async()=>(await outbox.listDue(Date.now())).filter(row=>row.matterId===a.id)
+  expect(await read()).toEqual([
+    expect.objectContaining({text:expect.stringContaining('并行对照')}),
+    expect.objectContaining({text:'后面接力的进展'}),
+  ])
+  const before=await read()
+  // Also crash after outbox insert but before acknowledging the intent.
+  f.db.query('UPDATE matter_plan_comparisons SET enqueued=0 WHERE matter_id=? AND position=1').run(a.id)
+  await f.restart({reports})
+  await expect.poll(()=>f.store.plans.comparisonIntents('owner')).toEqual([])
+  expect(await read()).toEqual(before)
+})
+
+it('recovers a selected baton pending admission, then continues the failed next baton from either WeChat task code',async()=>{
+  let occupied=false
+  const f=parallelFixture(false,{executionConflict:(_path,executor)=>executor==='codex'&&occupied})
+  const a=await finishParallel(f,'重启补派与微信续跑',[...ParallelPlanLegs,{executor:'codex',brief:'接力任务'}])
+  occupied=true
+  const delivery=wechatIdentity(),choice=`用 Claude 那版 任务 ${a.right.id}`
+  const reply=await f.service.handleWechat('owner',choice,delivery)
+  expect(reply).toContain(a.right.id)
+  await expect.poll(()=>f.store.plans.get(a.id)?.legs[1]?.stopReason).toBe('matter_blocked')
+  expect(f.store.plans.dispatchIntents('owner')).toEqual([{matterId:a.id}])
+  expect(f.calls).toHaveLength(2)
+  await f.restart()
+  expect(f.calls).toHaveLength(2)
+  occupied=false
+  await f.restart()
+  await expect.poll(()=>f.calls.length).toBe(3)
+  expect(f.calls[2]?.context.workbenchTaskId).toBe(a.right.id)
+  expect(f.store.plans.dispatchIntents('owner')).toEqual([])
+  expect(await f.service.handleWechat('owner',choice,delivery)).toBe(reply)
+  expect(f.calls).toHaveLength(3)
+  await f.finish(2,'失败一次',true)
+  await expect.poll(()=>f.store.plans.get(a.id)?.legs[1]?.state).toBe('stopped')
+  const resume=wechatIdentity(),command=`任务 ${a.id} 继续`
+  expect(await f.service.handleWechat('owner',command,resume)).toContain(a.right.id)
+  await expect.poll(()=>f.calls.length).toBe(4)
+  expect(f.calls[3]?.context.workbenchTaskId).toBe(a.right.id)
+  expect(f.calls[3]?.context.resumeSessionId).toBe('session-2')
+  expect(await f.service.handleWechat('owner',command,resume)).toContain(a.right.id)
+  expect(f.calls).toHaveLength(4)
+  await f.finish(3,'又失败一次',true)
+  await expect.poll(()=>f.store.plans.get(a.id)?.legs[1]?.state).toBe('stopped')
+  expect(await f.service.handleWechat('owner',`任务 ${a.right.id} 继续`,wechatIdentity())).toContain(a.right.id)
+  await expect.poll(()=>f.calls.length).toBe(5)
+  await f.finish(4,'状态：做完')
+  await expect.poll(()=>f.store.plans.get(a.id)?.state).toBe('done')
+})
+
+it('keeps an older task code bound to its own parallel baton in the same matter',async()=>{
+  const f=parallelFixture()
+  const a=await finishParallel(f,'同一件事两次并行',[...ParallelPlanLegs,...ParallelPlanLegs])
+  await f.service.worktreeAction(a.right.id,'merge')
+  await expect.poll(()=>f.calls.length).toBe(4)
+  await f.finish(2,'状态：做完')
+  await f.finish(3,'状态：做完')
+  await expect.poll(()=>f.store.plans.comparison(a.id,2)?.text).toContain('第 2 棒')
+  expect(await f.service.handleWechat('owner',`用 Codex 那版 任务 ${a.left.id}`,wechatIdentity())).toContain('等并行组结束')
+  expect(f.store.plans.candidates(a.id,2).some(m=>m.chosen)).toBe(false)
+  const candidate=f.store.plans.candidates(a.id,2).find(member=>member.executor==='codex')!
+  expect(await f.service.handleWechat('owner',`用 Codex 那版 任务 ${candidate.taskId}`,wechatIdentity())).toContain(candidate.taskId!)
+  expect(f.store.plans.get(a.id)?.state).toBe('done')
 })

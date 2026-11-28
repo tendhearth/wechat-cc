@@ -35,6 +35,7 @@ export function executionErrorMessage(error){
   worktree_git_failed:'git 操作没成功，请在终端里看看这个项目的状态。',
   worktree_branch_exists:'同名分支已经存在，没有覆盖。请重新交办一次。',
   matter_parallel_not_ready:'等并行组结束后，再选一个有工作区的版本合回。',
+  matter_parallel_snapshot_changed:'这版的提交变了，请看过新对照后再选一次。',
   worktree_uncommitted:'独立工作区里还有没提交的改动，先「提交到分支」再合回。',
   project_dirty:'项目目录里有没提交的改动，CC 不替你合并。先处理那些改动，或自己在项目里合并。',
   project_detached:'项目目录现在不在任何分支上，请自己在项目里合并。',

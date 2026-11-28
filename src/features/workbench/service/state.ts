@@ -23,14 +23,14 @@ export interface Active extends PathReservation {
   relayReportedTurn?:number
   ledgerOpening?:boolean
   ledgerRunId?:string
+  parallelInputFailed?:boolean
+  ownerStopped?:boolean
   execution:AgentExecutionChoice
   attachments:Attachment[]
   handoffId?:string
   handoffArtifacts?:ArtifactSelection[]
   nativeResume?:AcceptedNativeResume
   reviewBaseline?: GitBaseline
-  parallelChangesPartial?:boolean
-  parallelChanges?:Map<string,{path:string;added:number|null;removed:number|null}>
   ledgerArtifact?:{files:string[];fileCount:number;commit:string|null}
   /** 已截取的代码变更快照数;第一份沿用旧名,之后带 -2/-3。 */
   reviewSeq?: number

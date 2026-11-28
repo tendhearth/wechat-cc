@@ -38,6 +38,7 @@ it.each<[CandidateStatus[],boolean]>([
 it.each([
   ['用 Codex 那版',{name:'Codex'}],
   ['用Claude那版 任务 abcd1234。',{name:'Claude',matterId:'abcd1234'}],
+  ['用 Codex 那版 任务 deadbeef 对照 2',{name:'Codex',matterId:'deadbeef',revision:2}],
   ['先别用 Codex 那版',null],
   ['用 Codex 那版吗？',null],
 ])('recognizes the owner selection %s',(text,expected)=>expect(parseParallelChoice(text)).toEqual(expected))

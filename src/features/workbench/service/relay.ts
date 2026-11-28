@@ -154,7 +154,18 @@ export function makeRelayDomain(ctx:ServiceCtx,d:{admission:AdmissionDomain;ledg
     return true
   }
   const resume:RelayResume=(id,accept)=>resumePending(id,accept,true)
-  const afterChoice=async(id:string)=>{resumePending(id,()=>{},false)}
+  function afterChoice(id:string){
+    try{resumePending(id,()=>{},false)}
+    catch(error){ctx.log?.('MATTER_RELAY',`${id}: choice dispatch deferred: ${String(error)}`)}
+  }
+  function recoverChoices(){
+    const owner=ctx.deps.ownerChatId()
+    if(!owner)return
+    const pending=store.plans.dispatchIntents(owner)
+    if(pending.length)queueMicrotask(()=>{
+      if(!state.stopping)for(const {matterId} of pending)afterChoice(matterId)
+    })
+  }
   const afterTurn:RelayTurnHook=async(running,status,pendingQuestion,ownerInputQueued)=>{
     const taskId=running.taskId,id=store.plans.root(taskId)
     if(running.relayClosing)return
@@ -200,5 +211,5 @@ export function makeRelayDomain(ctx:ServiceCtx,d:{admission:AdmissionDomain;ledg
       ?? plan.legs.filter(l=>l.state==='completed').at(-1) ?? plan.legs[0]!
     return {index:current.position,total:plan.legs.length,currentAgent:current.executor}
   }
-  return {afterTurn,afterChoice,resume,rosterRelay}
+  return {afterTurn,afterChoice,recoverChoices,resume,rosterRelay}
 }

@@ -81,6 +81,7 @@ export type BackendCode = 'stale' | 'busy' | 'offline' | 'revoked' | 'timeout' |
   | 'handoff_changed'
   | 'checkup_invalid' | 'checkup_rate_limited'
   | 'parallel_not_ready'
+  | 'parallel_snapshot_changed'
   | 'worktree_not_git' | 'worktree_dirty' | 'worktree_uncommitted' | 'merge_manual' | 'project_busy' | 'worktree_branch_missing' | 'worktree_base_missing'
   | 'input_stale' | 'input_conflict'
   | 'too_large' | 'no_voice'

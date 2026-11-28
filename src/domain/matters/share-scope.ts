@@ -149,7 +149,7 @@ export function sharedMatterView(source: ShareSource): SharedMatter {
   const notes = kept.map((note): SharedNote => {
     const partner = note.author.startsWith(PARTNER_AUTHOR_PREFIX)
     // 产出那一条后面两行是提交号和工作区目录,都是本机的东西,只留第一行(几个文件、叫什么)。
-    const text = note.kind === 'artifact' ? note.text.split('\n')[0] ?? '' : note.text
+    const text = note.kind === 'artifact' ? (note.text.split('\n')[0] ?? '').replace(/^(.*) 提交 (?:[a-f0-9]{7,64}|未取得) 工作区 .+$/u,'$1') : note.text
     return { author: clean(partner ? note.author.slice(PARTNER_AUTHOR_PREFIX.length) : note.author, null).slice(0, 64), partner, kind: note.kind as SharedNote['kind'], text: clean(text, root), at: note.createdAt }
   })
   const has = (wanted: SharedLeg['status']) => legs.some(leg => leg.status === wanted)

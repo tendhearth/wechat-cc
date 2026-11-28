@@ -4,13 +4,14 @@ export type CandidateStatus='queued'|'running'|'waiting'|'completed'|'failed'|'c
 export interface CandidateResult {
   files:{path:string;added:number|null;removed:number|null}[]|null
   partial?:boolean
+  snapshot?:string
   statusLine:string|null
   tests:string[]
 }
 
 export const parseParallelChoice=(text:string)=>{
-  const match=/^用[ \t]*([^\s][^\r\n]{0,79}?)\s*那版(?:\s+任务\s+([a-f0-9]{8}))?[。.!！]?$/i.exec(text.trim())
-  return match?{name:match[1]!.trim(),matterId:match[2]?.toLowerCase()}:null
+  const match=/^用[ \t]*([^\s][^\r\n]{0,79}?)\s*那版(?:\s+任务\s+([a-f0-9]{8})(?:\s+对照\s+([1-9]\d{0,8}))?)?[。.!！]?$/i.exec(text.trim())
+  return match?{name:match[1]!.trim(),matterId:match[2]?.toLowerCase(),...(match[3]?{revision:Number(match[3])}:{})}:null
 }
 
 export const candidateTerminal=(status:CandidateStatus)=>!['queued','running','waiting'].includes(status)
@@ -43,14 +44,14 @@ export const candidateLabels:Record<CandidateStatus,string>={
   queued:'排队',running:'在做',waiting:'等你回答',completed:'做完',failed:'没做成',cancelled:'已停',interrupted:'已停或中断',
 }
 
-export function compareCandidates(title:string,position:number,members:readonly {name:string;status:CandidateStatus;taskId:string|null;result:CandidateResult|null}[]):string{
+export function compareCandidates(title:string,position:number,members:readonly {name:string;status:CandidateStatus;taskId:string|null;result:CandidateResult|null}[],revision?:number):string{
   const lines=members.map(({name,status,taskId,result})=>{
     const files=result?.files
     const counts=files?.every(file=>file.added!==null&&file.removed!==null)
       ? `，+${files.reduce((n,f)=>n+f.added!,0)} / −${files.reduce((n,f)=>n+f.removed!,0)} 行`:''
     const paths=files?.slice(0,8).map(file=>file.path).join('、')
     return [
-      `${name} · ${candidateLabels[status]} · ${files?`${result?.partial?'已统计 ':''}${files.length} 个文件${counts||'，部分行数未取得'}`:'改动统计未取得'}`,
+      `${name} · ${candidateLabels[status]} · ${files?`${result?.partial?'部分统计 · ':''}${files.length} 个文件${counts||'，部分行数未取得'}`:'部分统计 · 改动统计未取得'}`,
       ...(paths?[`  ${paths}${files!.length>8?'等':''}`]:[]),
       ...(result?.statusLine?[`  ${result.statusLine}`]:[]),
       ...(result?.tests.length?[`  验证（执行者报告）：${result.tests.join('、')}`]:[]),
@@ -59,5 +60,5 @@ export function compareCandidates(title:string,position:number,members:readonly 
   })
   const example=members.find(m=>m.taskId&&m.status==='completed')??members.find(m=>m.taskId)
   return [`「${title}」第 ${position} 棒的并行对照`,...lines,
-    example?`选定后可以说「用 ${example.name} 那版」。`:'这组没有可合回的工作区。'].join('\n')
+    example?`选定后可以说「用 ${example.name} 那版 任务 ${example.taskId}${revision===undefined?'':` 对照 ${revision}`}」。`:'这组没有可合回的工作区。'].join('\n')
 }

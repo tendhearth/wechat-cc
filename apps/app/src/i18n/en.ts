@@ -414,6 +414,7 @@ const en = {
   'progress.records': 'Notes',
   'progress.parallel': 'Step {position} · {count} in parallel',
   'progress.parallelNotReady': 'Wait for the group to finish, then choose a version with a workspace.',
+  'progress.parallelSnapshotChanged': 'This version changed. Review the updated comparison and choose again.',
   'progress.parallelChosen': 'Selected',
   'progress.agent.waiting': 'Waiting for your answer',
   'progress.agent.queued': 'Queued',

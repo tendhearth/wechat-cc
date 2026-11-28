@@ -180,7 +180,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     if (!quiet(running)) {
       if(store.plans.get(store.plans.root(running.taskId))?.state==='approved'){
         store.atomic(()=>{finishLedger(ctx,running,'completed');store.bump(running.taskId)})
-        void domains.relay?.(running,'completed',running.questions.pending().length>0||running.permissions.pending().length>0).catch(error=>ctx.log?.('MATTER_RELAY',String(error)))
+        void domains.relay?.(running,running.parallelInputFailed?'failed':'completed',running.questions.pending().length>0||running.permissions.pending().length>0,hasUndeliveredInput(running)).catch(error=>ctx.log?.('MATTER_RELAY',String(error)))
       }
       return
     }
@@ -208,7 +208,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
       await codeCapture
       if(state.shutdownComplete||running.finishing||running.cancelled||running.uncertain||running.turnSeq!==ledgerTurn||!quiet(running))return
       store.atomic(()=>{finishLedger(ctx,running,'completed');store.bump(running.taskId)})
-      await domains.relay?.(running,'completed',running.questions.pending().length>0||running.permissions.pending().length>0)
+      await domains.relay?.(running,running.parallelInputFailed?'failed':'completed',running.questions.pending().length>0||running.permissions.pending().length>0,hasUndeliveredInput(running))
     })().catch(error=>ctx.log?.('MATTER_LEDGER',`completion failed: ${error instanceof Error?error.message:String(error)}`))
     armIdleClose(running)
     // 做到条件成立为止(v80):这一轮安静了 ⇒ 排一次检查(按 run+turnSeq 去重,不阻塞)。
@@ -489,7 +489,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     const running=state.runsByTask.get(id)
     if(expectedRunId!==undefined&&running?.identity!==expectedRunId)throw new Error('control_stale')
     // 主人停止优先于部署续接，连正在等 close 的那条 run 也要撤销。
-    if(running)running.restartInterrupted=false
+    if(running){running.restartInterrupted=false;running.ownerStopped=!running.relayClosing}
     try { dropRestartContinuation(ctx.stateDir,id) } catch (err) { ctx.log?.('WORKBENCH_RESTART',`cannot revoke ${id}: ${err instanceof Error?err.message:err}`) }
     const persisted=store.get(id)
     if(persisted.error==='daemon_restarted')store.update(id,persisted.status,null)

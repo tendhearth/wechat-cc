@@ -2,7 +2,7 @@ import {candidateResult,candidateStatus,candidateTerminal,compareCandidates,grou
 import {redactSecrets} from '../../../domain/cli-transcript'
 import {planRequestId} from '../../../adapters/workbench/matter-plan-input'
 import {stepPayload,timelineKind} from '../../../adapters/store/workbench/store'
-import {git,worktreeDirty,type WorktreeStart} from '../../../adapters/git/worktree-workspaces'
+import {git,worktreeDirty,worktreeNetChanges,type WorktreeStart} from '../../../adapters/git/worktree-workspaces'
 import type {PlanCandidate} from '../../../adapters/store/matter-plans'
 import type {EntryDomain} from './entry'
 import type {ServiceCtx} from './ctx'
@@ -13,24 +13,45 @@ const sanitize=(text:string)=>redactSecrets(text).replace(/[\p{Cc}\p{Cf}]/gu,' '
 
 export function makeParallelDomain(ctx:ServiceCtx,entry:EntryDomain){
   const {store,state}=ctx
-  const selecting=new Set<string>()
   const launching=new Map<string,Promise<void>>()
+  function enqueueComparison(id:string,position:number,revision:number,text:string){
+    const sink=ctx.deps.reports
+    if(!sink?.enqueueComparison)return
+    void Promise.resolve().then(()=>sink.enqueueComparison!(id,text,{position,revision})).then(
+      ()=>store.plans.comparisonEnqueued(id,position,revision),
+    ).catch(error=>ctx.log?.('MATTER_PARALLEL',`${id}/${position}: comparison delivery: ${String(error)}`))
+  }
+  function snapshot(taskId:string):Pick<NonNullable<PlanCandidate['result']>,'files'|'partial'|'snapshot'>{
+    const tree=store.worktrees.get(taskId)
+    if(!tree?.start||tree.removedAt!==null)return {files:null,partial:true}
+    try{
+      const stats=worktreeNetChanges(tree.root,tree.start.sha)
+      return {...stats,files:stats.files?.map(file=>({...file,path:sanitize(file.path)}))??null}
+    }catch{return {files:null,partial:true}}
+  }
   function report(id:string,position:number){
     const group=store.plans.candidates(id,position)
-    if(!groupSettled(group))return
+    if(!groupSettled(group)||group.some(member=>member.taskId&&store.liveInputs.count(member.taskId)>0))return
     const title=sanitize(store.get(id).title)
-    const text=compareCandidates(title,position,group.map(member=>({
-      ...member,name:sanitize(ctx.deps.registry.namesOf(member.executor).name),
-    })))
     const saved=store.atomic(()=>{
-      if(!store.plans.markComparison(id,position))return false
+      const previous=store.plans.comparison(id,position)
+      if(previous?.text)return null
+      for(const member of group)if(member.taskId&&!member.result){
+        member.result={...candidateResult('',null),...snapshot(member.taskId)}
+        store.plans.refreshCandidate(member,member.result)
+      }
+      const text=compareCandidates(title,position,group.map(member=>({
+        ...member,name:sanitize(ctx.deps.registry.namesOf(member.executor).name),
+      })),previous?.revision??1)
+      const intent=store.plans.saveComparison(id,position,text)
+      if(!intent)return null
       if(!group.some(member=>member.taskId))store.plans.stop(id,position,'leg_failed')
       store.addEvent(id,'system',text)
-      return true
+      return {...intent,text}
     })
     if(!saved)return
     ctx.hub.bumped(id)
-    ctx.deps.reports?.enqueueRelay?.(id,text)
+    enqueueComparison(id,position,saved.revision,saved.text)
   }
   function settle(member:PlanCandidate,status:PlanCandidate['status'],result:PlanCandidate['result']){
     const {matterId,position,ordinal}=member
@@ -47,16 +68,14 @@ export function makeParallelDomain(ctx:ServiceCtx,entry:EntryDomain){
     const member=store.plans.candidateForTask(running.taskId)
     if(!member||member.runId!==running.ledgerRunId)return false
     if(candidateTerminal(member.status))return true
-    if(running.cancelled&&!running.closedWhileReplied)status='cancelled'
+    if(ownerInputQueued&&status==='completed'&&!running.cancelled)return true
+    if(running.cancelled&&(!running.closedWhileReplied||running.ownerStopped))status='cancelled'
     const steps=store.steps(running.taskId).filter(step=>stepPayload(step).runId===running.identity)
     const lastInput=steps.findLast(step=>timelineKind(step)==='user')?.seq??0
-    // An idle snapshot can close the stored turn before a buffered result
-    // arrives. The result may then own an empty turn after the actual reply.
+    // An idle snapshot can close the stored turn before the buffered result.
     const reply=steps.findLast(step=>step.seq>lastInput&&timelineKind(step)==='text')
-    if(ownerInputQueued&&status==='completed'&&!question)return true
     const text=reply?stepPayload(reply).text:''
-    const result=candidateResult(text,running.parallelChanges?[...running.parallelChanges.values()].map(f=>({...f,path:sanitize(f.path)})):null)
-    if(running.parallelChangesPartial)result.partial=true
+    const result={...candidateResult(text,null),...snapshot(running.taskId)}
     result.tests=result.tests.map(sanitize).filter(Boolean)
     settle(member,candidateStatus(state.stopping?'interrupted':running.uncertain?'interrupted':status,text,question,!running.publicFinished),result)
     return true
@@ -97,41 +116,73 @@ export function makeParallelDomain(ctx:ServiceCtx,entry:EntryDomain){
     const sha=git(tree.root,['rev-parse','--verify','HEAD^{commit}'])
     return {target:{kind:'project',projectId:prior.projectId,isolation:'worktree'},start:{base:tree.branch,sha,notices:[]}}
   }
-  async function choose(taskId:string,merge:()=>Promise<WorktreeActionResult>,resume:(id:string)=>Promise<void>){
+  async function choose(taskId:string,merge:(sha?:string)=>WorktreeActionResult,resume:(id:string)=>void,record?:(result:WorktreeActionResult)=>void){
     const member=store.plans.candidateForTask(taskId)
-    if(!member||member.chosen)return merge()
+    if(!member||member.chosen){
+      const merged=merge()
+      record?.(merged)
+      return merged
+    }
     const {matterId:id,position,ordinal}=member
     const owner=ctx.deps.ownerChatId()
     if(!owner||store.get(id).ownerChatId!==owner||store.get(taskId).ownerChatId!==owner)throw Error('matter_ledger_forbidden')
     ctx.ensureAccepting()
     const plan=store.plans.get(id)
-    if(plan?.state==='cancelled')return merge()
     const group=store.plans.candidates(id,position)
-    if(selecting.has(id)||store.get(id).archivedAt!==null||plan?.state!=='approved'||plan.legs.find(l=>l.position===position)?.state!=='running'||!groupSettled(group)||group.some(m=>m.chosen))throw Error('matter_parallel_not_ready')
-    selecting.add(id)
-    try{
-      const merged=await merge()
+    if(store.get(id).archivedAt!==null||plan?.state!=='approved'||plan.legs.find(l=>l.position===position)?.state!=='running'||group.some(m=>m.chosen))throw Error('matter_parallel_not_ready')
+    for(const version of group)if(version.taskId&&store.liveInputs.count(version.taskId)>0){
       store.atomic(()=>{
-        store.plans.choose(id,position,ordinal)
-        store.ledger.selection(id,member.runId!,`主人选定 ${member.executor} 的版本。接着在它的工作区 ${store.get(taskId).path} 做。`)
+        store.plans.reopenCandidate(version.taskId!,version.runId!)
         store.bump(id)
       })
       ctx.hub.bumped(id)
-      await resume(id)
-      return merged
-    }finally{selecting.delete(id)}
+      throw Error('matter_parallel_not_ready')
+    }
+    if(!groupSettled(group)||!store.plans.comparison(id,position)?.text)throw Error('matter_parallel_not_ready')
+    const current=snapshot(taskId)
+    if(!current.snapshot)throw Error(current.files?'worktree_uncommitted':'matter_parallel_not_ready')
+    if(member.result?.snapshot!==current.snapshot){
+      store.atomic(()=>store.plans.refreshCandidate(member,{...candidateResult('',null),...member.result,...current}))
+      report(id,position)
+      throw Error('matter_parallel_snapshot_changed')
+    }
+    const merged=store.atomic(()=>{
+      const result=merge(current.snapshot)
+      store.plans.choose(id,position,ordinal)
+      store.ledger.selection(id,member.runId!,`主人选定 ${member.executor} 的版本。接着在它的工作区 ${store.get(taskId).path} 做。`)
+      store.bump(id)
+      record?.(result)
+      return result
+    })
+    ctx.hub.bumped(id)
+    resume(id)
+    return merged
   }
-  function choiceTask(owner:string,name:string,id?:string){
-    const groups=store.plans.pendingChoices(owner).filter(g=>!id||g.matterId===id)
-    const matches=groups.flatMap(g=>store.plans.candidates(g.matterId,g.position).filter(member=>
-      member.executor.toLowerCase()===name.toLowerCase()||ctx.deps.registry.namesOf(member.executor).name.toLowerCase()===name.toLowerCase()))
-    if(matches.length>1)throw Error('matter_parallel_choice_ambiguous')
+  function choiceTask(owner:string,name:string,target?:string,revision?:number){
+    if(!target)throw Error('matter_parallel_choice_ambiguous')
+    const candidate=store.plans.candidateForTask(target)
+    const id=candidate?.matterId??target
+    // A root task without its own membership is usable only when its comparison
+    // identifies a single position, including past comparisons.
+    const positions=candidate?[candidate.position]:[...new Set(store.plans.candidates(id).map(m=>m.position))]
+    if(positions.length!==1)throw Error('matter_parallel_choice_ambiguous')
+    const position=positions[0]!
+    const plan=store.plans.get(id)
+    if(!plan||store.get(id).ownerChatId!==owner)throw Error('matter_parallel_choice_ambiguous')
+    if(plan.state!=='approved'||plan.legs.find(leg=>leg.position===position)?.state!=='running')throw Error('matter_parallel_not_ready')
+    if(revision!==undefined&&store.plans.comparison(id,position)?.revision!==revision)throw Error('matter_parallel_snapshot_changed')
+    const matches=store.plans.candidates(id,position).filter(member=>
+      member.executor.toLowerCase()===name.toLowerCase()||ctx.deps.registry.namesOf(member.executor).name.toLowerCase()===name.toLowerCase())
+    if(matches.length!==1)throw Error('matter_parallel_choice_ambiguous')
     if(!matches[0]?.taskId)throw Error('matter_parallel_not_ready')
     return matches[0].taskId
   }
   function recoverReports(){
     const owner=ctx.deps.ownerChatId()
-    if(owner)for(const group of store.plans.pendingChoices(owner))report(group.matterId,group.position)
+    if(!owner)return
+    // Recover already committed intents before composing any new comparisons.
+    for(const {matterId,position,revision,text} of store.plans.comparisonIntents(owner))enqueueComparison(matterId,position,revision,text)
+    for(const group of store.plans.pendingChoices(owner))report(group.matterId,group.position)
   }
   return {afterTurn,launch,forkStart,choose,choiceTask,recoverReports}
 }

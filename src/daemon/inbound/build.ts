@@ -74,7 +74,7 @@ export function buildInboundPipeline(d: InboundPipelineDeps): InboundPipeline {
   //    现在不在入站拦 —— 命令和控制回话照常;真要调需要保护的模型时,由协调器 / provider 闸门按调用拦。)
   //   附件 / 语音转文字 —— 提到路由之前,探针才看得到转出来的文字(4b 曾让语音里的指称永远判成 chat)。
   const consume = makeMwConsume({ handlers: {
-    ...(d.commands ? { command: makeMwCommand(d.commands) } : {}),
+    ...(d.commands ? { command: makeMwCommand({...d.commands,focusedTask:taskReference?.focusedTask}) } : {}),
     ...(taskReference ? { 'task-reference': taskReference } : {}),
   } })
   // 第四步(d):App 一轮走同一张表。链尾那一站只负责记"没人吃"。

@@ -29,9 +29,50 @@ export function makeMatterPlans(db:Db,now=()=>Date.now()){
   const root=(id:string)=>candidateForTask(id)?.matterId??id
   const activeTask=(id:string,before=Infinity)=>candidates(id).filter(c=>c.position<before&&c.chosen).at(-1)?.taskId??id
   function cancel(id:string):boolean{return db.query("UPDATE matter_plans SET state='cancelled' WHERE matter_id=? AND state='approved'").run(id).changes>0}
+  const consumeDispatch=(id:string,from:number|null)=>{
+    db.query('UPDATE matter_plan_comparisons SET dispatch_pending=0 WHERE matter_id=? AND position=?').run(id,from)
+  }
   return {
-    markComparison(id:string,position:number){
-      return db.query('UPDATE matter_plan_candidates SET compared=1 WHERE matter_id=? AND position=? AND ordinal=1 AND compared=0').run(id,position).changes===1
+    comparison:(id:string,position:number)=>db.query<{revision:number;text:string|null},[string,number]>(
+      'SELECT revision,text FROM matter_plan_comparisons WHERE matter_id=? AND position=?').get(id,position),
+    saveComparison(id:string,position:number,text:string){
+      return db.query<{revision:number},[string,number,string]>(`INSERT INTO matter_plan_comparisons(matter_id,position,text) VALUES(?,?,?)
+        ON CONFLICT(matter_id,position) DO UPDATE SET text=excluded.text,enqueued=0 WHERE text IS NULL RETURNING revision`).get(id,position,text)
+    },
+    comparisonIntents(owner:string){
+      return db.query<{matterId:string;position:number;revision:number;text:string},[string]>(`SELECT c.matter_id AS matterId,c.position,c.revision,c.text FROM matter_plan_comparisons c
+        JOIN workbench_tasks t ON t.id=c.matter_id WHERE t.owner_chat_id=? AND t.archived_at IS NULL AND c.text IS NOT NULL AND c.enqueued=0`).all(owner)
+    },
+    comparisonEnqueued(id:string,position:number,revision:number){
+      db.query('UPDATE matter_plan_comparisons SET enqueued=1 WHERE matter_id=? AND position=? AND revision=?').run(id,position,revision)
+    },
+    dispatchIntents(owner:string){
+      return db.query<{matterId:string},[string]>(`SELECT c.matter_id AS matterId FROM matter_plan_comparisons c
+        JOIN matter_plans p ON p.matter_id=c.matter_id JOIN workbench_tasks t ON t.id=c.matter_id
+        WHERE p.state='approved' AND c.dispatch_pending=1 AND t.owner_chat_id=? AND t.archived_at IS NULL`).all(owner)
+    },
+    choiceReceipt(id:string,hash:string){
+      const row=db.query<{commandHash:string;reply:string},[string]>('SELECT command_hash AS commandHash,reply FROM matter_plan_choice_receipts WHERE request_id=?').get(id)
+      if(row&&row.commandHash!==hash)throw Error('control_conflict')
+      return row?.reply
+    },
+    saveChoiceReceipt(id:string,hash:string,taskId:string|null,reply:string){
+      db.query('INSERT INTO matter_plan_choice_receipts VALUES(?,?,?,?)').run(id,hash,taskId,reply)
+    },
+    reopenCandidate(taskId:string,runId:string|undefined){
+      const member=candidateForTask(taskId)
+      if(!member||member.chosen||member.runId!==runId)return null
+      const plan=get(member.matterId)
+      if(plan?.state!=='approved'||plan.legs.find(l=>l.position===member.position)?.state!=='running')return null
+      const {matterId,position,ordinal}=member
+      db.query("UPDATE matter_plan_candidates SET status='running',result=NULL WHERE matter_id=? AND position=? AND ordinal=?").run(matterId,position,ordinal)
+      db.query('UPDATE matter_plan_comparisons SET text=NULL,revision=revision+1 WHERE matter_id=? AND position=? AND text IS NOT NULL').run(matterId,position)
+      return matterId
+    },
+    refreshCandidate(member:PlanCandidate,result:CandidateResult){
+      const {matterId,position,ordinal}=member
+      db.query('UPDATE matter_plan_candidates SET result=? WHERE matter_id=? AND position=? AND ordinal=?').run(JSON.stringify(result),matterId,position,ordinal)
+      db.query('UPDATE matter_plan_comparisons SET text=NULL,revision=revision+1 WHERE matter_id=? AND position=? AND text IS NOT NULL').run(matterId,position)
     },
     pendingChoices(owner:string){
       return db.query<{matterId:string;position:number},[string]>(`SELECT l.matter_id AS matterId,l.position FROM matter_plan_legs l
@@ -64,6 +105,7 @@ export function makeMatterPlans(db:Db,now=()=>Date.now()){
         if(plan?.state!=='approved'||!allowed||plan.legs.find(l=>l.state==='pending')?.position!==to)throw Error('matter_plan_stale')
         db.query("UPDATE matter_plan_legs SET state='completed',stop_reason=NULL WHERE matter_id=? AND position=?").run(id,from)
         db.query("UPDATE matter_plan_legs SET state='running',auto_dispatches=auto_dispatches+?,stop_reason=NULL WHERE matter_id=? AND position=?").run(ownerResume?0:1,id,to)
+        consumeDispatch(id,from)
       })()
     },
     choose(id:string,position:number,ordinal:number){
@@ -73,7 +115,8 @@ export function makeMatterPlans(db:Db,now=()=>Date.now()){
         const changed=db.query("UPDATE matter_plan_candidates SET chosen=1 WHERE matter_id=? AND position=? AND ordinal=? AND task_id IS NOT NULL AND status IN ('completed','failed','cancelled','interrupted')").run(id,position,ordinal)
         if(changed.changes!==1)throw Error('matter_parallel_not_ready')
         db.query("UPDATE matter_plan_legs SET state='completed' WHERE matter_id=? AND position=?").run(id,position)
-        if(!plan.legs.some(l=>l.position>position))db.query("UPDATE matter_plans SET state='done' WHERE matter_id=?").run(id)
+        if(plan.legs.some(l=>l.position>position))db.query('UPDATE matter_plan_comparisons SET dispatch_pending=1 WHERE matter_id=? AND position=?').run(id,position)
+        else db.query("UPDATE matter_plans SET state='done' WHERE matter_id=?").run(id)
       })()
     },
     approve(id:string,legs:readonly PlanBrief[],firstRun:string,firstExecutor=legs[0]?.executor){
@@ -108,6 +151,7 @@ export function makeMatterPlans(db:Db,now=()=>Date.now()){
         const changed=db.query(`UPDATE matter_plan_legs SET state='running',run_id=?,auto_dispatches=auto_dispatches+?,stop_reason=NULL WHERE matter_id=? AND position=? AND state='pending'${ownerResume?'':' AND auto_dispatches=0'}`).run(runId,ownerResume?0:1,id,to)
         if(changed.changes!==1)throw Error('matter_plan_stale')
         if(current)db.query("UPDATE matter_plan_legs SET state='completed',stop_reason=NULL WHERE matter_id=? AND position=?").run(id,from)
+        consumeDispatch(id,from)
       })()
     },
     resume(id:string,runId:string){db.query("UPDATE matter_plan_legs SET state='running',stop_reason=NULL WHERE matter_id=? AND run_id=? AND state='stopped' AND EXISTS(SELECT 1 FROM matter_plans WHERE matter_id=? AND state='approved')").run(id,runId,id)},

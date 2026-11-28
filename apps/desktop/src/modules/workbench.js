@@ -1506,7 +1506,7 @@ export function initWorkbenchPage(deps, {focusSearch = false} = {}) {
       if (action === 'worktree-remove' && !armConfirm(target, '再点一次：删除工作区（分支保留）')) return
       if (action === 'worktree-merge' && !armConfirm(target, '再点一次：快进合并到项目当前分支')) return
       return mutate(V1.workbench.worktree, { id: controller.state.selectedId, action: action.slice('worktree-'.length) }, e => {
-        const code = String(e instanceof Error ? e.message : e).match(/\b(workbench_busy|worktree_dirty|worktree_removed|worktree_git_failed|not_worktree|matter_parallel_not_ready|worktree_uncommitted|project_dirty|project_detached|worktree_not_ff|project_busy|worktree_branch_missing|worktree_open|worktree_conflict|workbench_archived)\b/)?.[1]
+        const code = String(e instanceof Error ? e.message : e).match(/\b(workbench_busy|worktree_dirty|worktree_removed|worktree_git_failed|not_worktree|matter_parallel_not_ready|matter_parallel_snapshot_changed|worktree_uncommitted|project_dirty|project_detached|worktree_not_ff|project_busy|worktree_branch_missing|worktree_open|worktree_conflict|workbench_archived)\b/)?.[1]
         if (!code) return false
         fail(new Error(code === 'workbench_busy' ? '这个工作区还有会话占着，先收工再操作。' : executionErrorMessage(code) ?? code))
         return true

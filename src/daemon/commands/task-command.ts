@@ -25,7 +25,7 @@ export function makeTaskCommand(deps: TaskCommandDeps): WechatCommand {
     },
     async handle(msg, turn) {
       // App 一轮里的「任务」命令:出生地是桌面 / 手机,不是微信(origin 只由 daemon 在 appTurn 里填)。
-      const reply = await deps.handleWechat(msg.chatId, msg.text, turn?.origin !== undefined ? { ...msg, origin: turn.origin } : msg)
+      const reply = await deps.handleWechat(msg.chatId, msg.text, turn ? { ...msg, ...turn } : msg)
       if (reply !== null && typeof reply === 'object' && reply.kind === 'artifact_delivered') return true
       const card = typeof reply === 'object' ? reply?.card : undefined
       const text = card?.text ?? (typeof reply === 'string' ? reply : '任务控制仅对已绑定的主人开放。')

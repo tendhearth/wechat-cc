@@ -305,7 +305,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       const statusAsk=store.plans.get(store.plans.root(task.id))?.state==='approved'?`\n\n${RELAY_STATUS_ASK}`:''
       const pendingLedger=!!running.ledgerRunId&&store.ledger.needsInjection(running.ledgerRunId)
       const ledgerRoot=store.plans.root(task.id)
-      const records=pendingLedger?ledgerBrief(store.ledger.forExecutor(task.id,store.ledger.notes(ledgerRoot))):''
+      const records=pendingLedger?ledgerBrief(store.ledger.forExecutor(ledgerRoot,running.ledgerRunId,store.ledger.notes(ledgerRoot))):''
       const member=store.plans.candidateForTask(task.id)
       const parallelAsk=member&&member.runId===running.ledgerRunId
         ? '\n\n你在独立工作区做这一棒的一版。请只在你的工作区工作，不读取其他版本的工作区。做完时报告验证结果，把交付改动提交到当前分支，供主人选择。'
@@ -534,15 +534,25 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       } catch { /* never unlock an uncertain writer for a status failure */ }
       running.publicFinished=true; running.resolveDone()
       if (!running.uncertain) releaseReservation(running)
-      if(terminalCommitted)try{await domains.relay?.(running,relayStatus,relayPending,relayQueued)}catch(error){ctx.log?.('MATTER_RELAY',`completion failed: ${error instanceof Error?error.message:String(error)}`)}
+      const candidate=store.plans.candidateForTask(task.id)
+      const parallel=!!candidate&&candidate.runId===running.ledgerRunId&&!candidate.chosen
+      const canDrain=terminalCommitted&&finalStatus==='completed'&&!running.cancelled&&!running.uncertain&&!state.stopping
+      const continued=parallel&&canDrain&&drainInputs(task.id,running.directoryIdentity,start)
+      if(parallel&&!continued){
+        if(!canDrain||relayQueued)holdInputs(task.id,'任务已停止或补充无法继续；这条补充尚未发送。')
+        if(canDrain&&relayQueued)relayStatus='failed'
+      }
+      if(terminalCommitted)try{await domains.relay?.(running,relayStatus,relayPending,parallel?continued:relayQueued)}catch(error){ctx.log?.('MATTER_RELAY',`completion failed: ${error instanceof Error?error.message:String(error)}`)}
       // 做到条件成立为止(v80):不保留会话的执行者只走这里。成功做完 ⇒ 排检查(先于 drainInputs:主人有排队的,
       // until 自己让路);失败 ⇒ 停并写原因(额度 / 限流也在这里)。retained 的那一轮 settleQuiet 已经排过,按轮去重。
       try {
         if(terminalCommitted&&finalStatus==='completed'&&!running.cancelled&&!running.uncertain&&!state.stopping)untilAfterTurn(running)
         else if(terminalCommitted&&finalStatus==='failed')untilStop(task.id,finalError==='provider_quota_exhausted'?'额度用完了':finalError==='provider_rate_limited'?'被限流了':'这一轮出错了')
       } catch { /* 检查排不上不影响收尾 */ }
-      if(terminalCommitted&&finalStatus==='completed'&&!running.cancelled&&!running.uncertain&&!state.stopping)drainInputs(task.id,running.directoryIdentity,start)
-      else holdInputs(task.id,'任务已停止或未正常完成；这条补充尚未发送。')
+      if(!parallel){
+        if(canDrain)drainInputs(task.id,running.directoryIdentity,start)
+        else holdInputs(task.id,'任务已停止或未正常完成；这条补充尚未发送。')
+      }
     }
   }
 
@@ -564,7 +574,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     // 就不会发布这个未提交的信号,提交后的 (atomic 块外)会把真实 seq 发出去。
     const addRunEvent=(kind:'user'|'system',text:string,ownerPermission?:import('../../../domain/permission-rules/types').RememberAudit)=>store.addEvent(task.id,kind,text,null,runId,[],undefined,ownerPermission)
     let firstTurn=null as string|null
-    let planCancelled=false
+    let planCancelled=false,parallelRoot:string|null=null
     const handoffPeer=store.atomic(()=>{
       const root=store.plans.root(task.id),plan=store.plans.get(root)
       const candidate=store.plans.candidateForTask(task.id)
@@ -577,6 +587,10 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       }
       firstTurn=store.execution.accept(task.id,runId,execution)
       if(acceptance?.ledgerOpening)store.ledger.start(root,runId,task.providerId,text)
+      else {
+        parallelRoot=store.plans.reopenCandidate(task.id,baton)
+        if(parallelRoot)store.bump(parallelRoot)
+      }
       const bound=store.attachments.bind(attachments.map(a=>a.id),task.id,draftId,attachmentPolicy?continuationAttachmentScope(task.id,attachments):acceptance?.scope)
       if(!sameAttachments(bound,attachments))throw Error('invalid_attachment_changed')
       // A queued receipt keeps the ORIGINAL accepted run, even when this is a new dispatch run.
@@ -591,6 +605,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       acceptance?.persist(runId)
       return peer
     })
+    if(parallelRoot)ctx.hub.bumped(parallelRoot)
     // recordHandoffEvent 同时 bump 了交接的另一头(source 任务),不发它那边就看不到这条请求已挂上。
     let signalStop!:()=>void,resolveDone!:()=>void
     const stop=new Promise<null>(resolve => { signalStop=() => resolve(null) })

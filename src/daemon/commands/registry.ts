@@ -19,6 +19,7 @@ import type { MatterOrigin } from '../../ports/matters'
  */
 export interface CommandTurn {
   origin?: MatterOrigin | null
+  focusTaskId?: string
 }
 
 export interface WechatCommand {

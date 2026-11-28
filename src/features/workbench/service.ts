@@ -274,8 +274,8 @@ export function makeWorkbenchService(opts: Options) {
   // 开机对账:全部建好之后再做(顺序同改造前)
   store.recover()
   store.plans.recover()
-  parallelDomain.recoverReports()
   store.liveInputs.recover()
+  parallelDomain.recoverReports()
   quarantineRestartContinuations(ctx)
   lifecycleDomain.adoptWriters()
   scriptsDomain.recover()
@@ -283,6 +283,7 @@ export function makeWorkbenchService(opts: Options) {
   quotaResumeDomain.recover()
   // 构造完成后才开续接，仍经过原生会话准入、网络门和文件夹写者租约。
   queueMicrotask(()=>recoverRestartContinuations(ctx,executeDomain))
+  relayDomain.recoverChoices()
   unsubscribes.add(opts.registry.onRegister(()=>recoverRestartContinuations(ctx,executeDomain)))
 
   function ensureAccepting() {
@@ -361,8 +362,8 @@ export function makeWorkbenchService(opts: Options) {
     reviewComment:review.reviewComment,
     sendReviewComments:review.sendReviewComments,
     revertReviewHunk:review.revertReviewHunk,
-    worktreeAction:(id:string,action:Parameters<typeof worktreeDomain.worktreeAction>[1])=>action==='merge'
-      ? parallelDomain.choose(id,()=>worktreeDomain.worktreeAction(id,action),relayDomain.afterChoice)
+    worktreeAction:(id:string,action:Parameters<typeof worktreeDomain.worktreeAction>[1],record?:Parameters<typeof parallelDomain.choose>[3])=>action==='merge'
+      ? parallelDomain.choose(id,sha=>worktreeDomain.merge(id,sha),relayDomain.afterChoice,record)
       : worktreeDomain.worktreeAction(id,action),
     parallelChoiceTask:parallelDomain.choiceTask,
     rewindPreview:rewindDomain.rewindPreview,
