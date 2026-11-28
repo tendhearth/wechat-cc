@@ -11,6 +11,24 @@ describe('exact PR merge-tree coverage', () => {
   it('identical tree with a successful three-platform PR is reusable across squash SHAs', () => {
     expect(eligible(run, receipt, tree, jobs, 'o/r')).toBe(true)
   })
+  it('a merge-queue run (three platforms) covers the tree it fast-forwards into dev', () => {
+    expect(eligible({ ...run, event: 'merge_group' }, receipt, tree, jobs, 'o/r')).toBe(true)
+  })
+  it('a Linux-only PR run into dev never covers dev on its own', () => {
+    expect(eligible(run, receipt, tree, jobs.slice(0, 1), 'o/r')).toBe(false)
+  })
+  it.each(['pull_request', 'merge_group'])('%s runs write the receipt instead of looking one up', event => {
+    const dir = mkdtempSync(join(tmpdir(), 'coverage-receipt-'))
+    const cwd = process.cwd()
+    try {
+      process.chdir(dir)
+      const calls: string[] = []
+      main({ GITHUB_EVENT_NAME: event, GITHUB_REPOSITORY: 'o/r', GITHUB_RUN_ID: '7', GITHUB_RUN_ATTEMPT: '1' },
+        (cmd: string, args: string[]) => { calls.push([cmd, ...args].join(' ')); return args.includes('HEAD^{tree}') ? tree : 'b'.repeat(40) })
+      expect(JSON.parse(readFileSync(join(dir, 'ci-tree.json'), 'utf8'))).toMatchObject({ run: '7', tree, merge: 'b'.repeat(40) })
+      expect(calls.some(c => c.startsWith('gh'))).toBe(false)
+    } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }) }
+  })
   it('rerunning failed jobs can reuse the unchanged merge-tree receipt from an earlier attempt', () => {
     expect(eligible({ ...run, run_attempt: 2 }, receipt, tree, jobs, 'o/r')).toBe(true)
   })

@@ -4,7 +4,8 @@
  * ci.yml 里有三条约定,改错了不会当场红,只会让某个闸门安静地消失:
  *   ① 自改流水线的 CI 认 PR(2026-10-23 起它推 self/<id> 时开进 dev 的 PR):`pull_request`
  *      不能限 base、`push.branches` 不能再含 `self/**`(同一提交跑两遍,ci land 等两份 rollup),
- *      自改的 PR 照旧三平台。哪一条漏了,「CI 绿才进 dev」那道闸门要么安静地没了、要么安静地变窄。
+ *      进 dev 的 PR(含自改)只跑 Linux,三平台在合并队列(merge_group)里跑;队列触发或 ci · gate 少了,
+ *      「三平台绿才进 dev」那道闸门就安静地没了。
  *   ② `changes` 作业算出 `apps/desktop/**` 动没动过,`desktop-e2e` 靠它的
  *      输出决定在 dev 推送上跑不跑。少了 `needs` 或 `if` 里少了那半句,
  *      桌面改动又退回「合并前才知道红」。
@@ -30,6 +31,7 @@ const doc = parse(raw) as Record<string, unknown>
 const on = (doc.on ?? (doc as Record<string | number, unknown>)[true as unknown as string]) as {
   push?: { branches?: string[] }
   pull_request?: { branches?: string[] }
+  merge_group?: { types?: string[] }
 }
 const jobs = doc.jobs as Record<string, {
   needs?: string | string[]
@@ -42,6 +44,10 @@ describe('ci.yml —— 触发面', () => {
   it('自改走 PR 拿 CI:pull_request 不限 base,push 不再列 self/**(不然同一提交跑两遍)', () => {
     expect(on.pull_request?.branches).toBeUndefined()
     expect(on.push?.branches).not.toContain('self/**')
+  })
+
+  it('合并队列触发:进 dev 的最后一道在 merge_group 上跑', () => {
+    expect(on.merge_group?.types).toEqual(['checks_requested'])
   })
 
   it('master / dev 仍在 push 分支里', () => {
@@ -76,7 +82,7 @@ describe('ci.yml —— desktop-e2e 按路径在 dev 上跑', () => {
     // 2026-10-04:#197 把两条 e2e 弄红,只在 base=master 时跑 ⇒ 红了两天没人知道。
     const e2e = jobs.e2e!
     expect(e2e.needs).toBe('changes')
-    expect(e2e.if).toBe("needs.changes.outputs.code == 'true' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/master')")
+    expect(e2e.if).toBe("needs.changes.outputs.code == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.ref == 'refs/heads/master')")
   })
 })
 
@@ -129,7 +135,7 @@ describe('ci.yml —— 中继作业', () => {
 describe('ci.yml —— Tendhearth 手机 app 作业', () => {
   it('changes 算出 app 输出(apps/app 与协议包),app 作业依赖它', () => {
     const changes = jobs.changes!
-    expect(changes.outputs?.app).toBe('${{ steps.stack.outputs.all || steps.filter.outputs.app }}')
+    expect(changes.outputs?.app).toBe('${{ steps.stack.outputs.all || steps.queue.outputs.all || steps.filter.outputs.app }}')
     const filter = parse(changes.steps?.find(s => s.id === 'filter')?.with?.filters as string) as Record<string, string[]>
     expect(filter.app).toEqual(expect.arrayContaining(['apps/app/**', 'packages/protocol/**']))
     const app = jobs.app!
@@ -142,7 +148,7 @@ describe('ci.yml —— Tendhearth 手机 app 作业', () => {
   })
   it('app-native 在原生代码、协议包或 CI 定义变化时跑,且保留 Swift 与 Kotlin 两端', () => {
     const changes = jobs.changes!
-    expect(changes.outputs?.app_native).toBe('${{ steps.stack.outputs.all || steps.filter.outputs.app_native }}')
+    expect(changes.outputs?.app_native).toBe('${{ steps.stack.outputs.all || steps.queue.outputs.all || steps.filter.outputs.app_native }}')
     const filter = parse(changes.steps?.find(s => s.id === 'filter')?.with?.filters as string) as Record<string, string[]>
     expect(filter.app_native).toEqual(['apps/app/native/**', 'packages/protocol/**', '.github/workflows/ci.yml'])
     const native = jobs['app-native']!
@@ -196,7 +202,7 @@ describe('ci.yml —— 提速的边界', () => {
     expect(codeStep?.with?.['predicate-quantifier']).toBe('every')
     const f = parse(codeStep?.with?.filters as string) as Record<string, string[]>
     expect(f.code).toEqual(['**', '!**/*.md'])
-    expect(jobs.changes!.outputs?.code).toBe('${{ steps.stack.outputs.all || steps.code.outputs.code }}')
+    expect(jobs.changes!.outputs?.code).toBe('${{ steps.stack.outputs.all || steps.queue.outputs.all || steps.code.outputs.code }}')
     // 放进 id=filter 那一步,relay / app 这种多路径过滤器就变成「同时匹配」。
     expect(jobs.changes!.steps?.find(s => s.id === 'filter')?.with?.['predicate-quantifier']).toBeUndefined()
   })
@@ -208,12 +214,26 @@ describe('ci.yml —— 提速的边界', () => {
       expect(j.if, name).toContain("needs.changes.outputs.code == 'true'")
     }
   })
-  it('所有 PR 和 push 都保留三平台并行', () => {
-    const os = (jobs.build as { strategy?: { matrix?: { os?: unknown } } }).strategy?.matrix?.os
-    expect(os).toContain('ubuntu-latest')
-    expect(os).toContain('macos-latest')
-    expect(os).toContain('windows-latest')
-    expect(os).toEqual(['ubuntu-latest', 'macos-latest', 'windows-latest'])
+  it('只有进 dev 的 PR 是 Linux 一个平台;队列、推送、发版 PR、叠起来的 PR 都是三平台', () => {
+    const os = String((jobs.build as { strategy?: { matrix?: { os?: unknown } } }).strategy?.matrix?.os)
+    expect(os).toBe(`\${{ (github.event_name == 'pull_request' && github.base_ref == 'dev') && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest","macos-latest","windows-latest"]') }}`)
+  })
+  it('ci · gate 是唯一的必过检查:always 跑、needs 全部作业、红或取消就红', () => {
+    const gate = jobs.gate as { name?: string; if?: string; needs?: string[]; steps?: Array<{ run?: string; env?: Record<string, string> }> }
+    expect(gate.name).toBe('ci · gate')
+    expect(gate.if).toBe('always()')
+    const others = Object.keys(jobs).filter(k => k !== 'gate')
+    expect([...(gate.needs ?? [])].sort()).toEqual(others.sort())
+    expect(gate.steps?.[0]?.env?.RESULTS).toBe('${{ join(needs.*.result, \' \') }}')
+    expect(gate.steps?.[0]?.run).toMatch(/failure.*cancelled/)
+  })
+  it('队列里不按路径挑作业(全跑),只有整组只改 Markdown 才跳过', () => {
+    const queue = jobs.changes!.steps?.find(s => s.id === 'queue') as { if?: string; run?: string; env?: Record<string, string> }
+    expect(queue.if).toBe("github.event_name == 'merge_group'")
+    expect(queue.env?.BASE_SHA).toBe('${{ github.event.merge_group.base_sha }}')
+    expect(queue.run).toContain("grep -qv '\\.md$'")
+    expect(queue.run).not.toContain('${{')
+    for (const [k, v] of Object.entries(jobs.changes!.outputs ?? {})) expect(v, k).toContain('steps.queue.outputs.all')
   })
   it('唯一轻作业先核对 tree 回执,覆盖后不运行路径过滤器', () => {
     const changes = jobs.changes!
@@ -222,7 +242,7 @@ describe('ci.yml —— 提速的边界', () => {
     expect(text).toContain('actions/upload-artifact@v4')
     for (const id of ['filter', 'code']) {
       const step = changes.steps?.find(s => s.id === id) as { if?: string }
-      expect(step.if).toBe("steps.coverage.outputs.covered != 'true'")
+      expect(step.if).toBe("steps.coverage.outputs.covered != 'true' && github.event_name != 'merge_group'")
     }
     expect(text).toContain('GH_TOKEN')
   })

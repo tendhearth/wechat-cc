@@ -59,7 +59,7 @@ const ciTriageCmd = defineCommand({
 
 // ── ci land — 叠起来的一串 PR 一条命令合进 dev(src/cli/ci-land.ts 开头写了每条「停下来」的来历) ──
 const ciLandCmd = defineCommand({
-  meta: { name: 'land', description: '把叠起来的一串 PR 合进 dev:只等最上面那个的 CI,绿了从下往上 rebase / 改 base / squash 合(在整合者自己的 detached worktree 里跑)' },
+  meta: { name: 'land', description: '把一个 PR(或叠起来的一串)合进 dev:等 PR 的 CI,绿了经合并队列合(队列里跑三平台);叠起来的从下往上 rebase 再进队列(在整合者自己的 detached worktree 里跑)' },
   args: {
     pr: { type: 'positional', required: true, description: '最上面那个 PR 的编号' },
     'min-checks': { type: 'string', description: '非 skipped 的检查至少几条才算 CI 真跑了(缺省 5;只改文档的串给 1)' },
@@ -67,6 +67,7 @@ const ciLandCmd = defineCommand({
     'dry-run': { type: 'boolean', description: '只认出这一串、打印计划,不动任何东西' },
     'skip-typecheck': { type: 'boolean', description: '每层 rebase 后不跑 tsc(缺省会跑)' },
     'parent-old': { type: 'string', description: '接着上一次、最下面那层叠在已合 PR 上且自动找不到时:它当初叠在下层的哪个提交上' },
+    direct: { type: 'boolean', description: '不走合并队列,照老办法直接 squash 合(要求跟 dev 同步、PR 上三平台绿;队列关掉时用)' },
   },
   async run({ args }) {
     const { runCiLand, CI_LAND_EXIT } = await import('../ci-land.ts')
@@ -87,6 +88,7 @@ const ciLandCmd = defineCommand({
       dryRun: Boolean(args['dry-run']),
       skipTypecheck: Boolean(args['skip-typecheck']),
       ...(args['parent-old'] ? { parentOld: String(args['parent-old']) } : {}),
+      queue: !args.direct,
     })
     ;(res.exitCode === CI_LAND_EXIT.landed ? console.log : console.error)(res.message)
     process.exit(res.exitCode)

@@ -53,7 +53,8 @@ export function ghForge(makeDeps: (cwd: string) => CiLandDeps): Forge {
       return { number: n, url }
     },
     async land(o) {
-      const r = await runCiLand(makeDeps(o.cwd), { top: o.pr, target: o.base, minChecks: 1, timeoutMin: 60 })
+      // dev 开着合并队列:PR 的 Linux CI + 队列里三平台那一轮,60 分钟不够宽裕。
+      const r = await runCiLand(makeDeps(o.cwd), { top: o.pr, target: o.base, minChecks: 1, timeoutMin: 90, queue: o.base === 'dev' })
       return { exitCode: r.exitCode, message: r.message }
     },
     async close(o) {

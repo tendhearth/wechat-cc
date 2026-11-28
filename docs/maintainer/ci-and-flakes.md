@@ -4,8 +4,9 @@
 
 `.github/workflows/ci.yml` 在 push 到 `master` / `dev`,以及所有 PR 上跑。自改流水线推 `self/<id>` 时开一个进 `dev` 的 PR,它「CI 绿才进 dev」的闸门架在那个 PR 的 CI 上(2026-10-23 起;以前是 `self/**` 的推送单跑,两处都列会让同一提交跑两遍)。
 
-- **build · ${{ matrix.os }}** —— `ubuntu-latest` / `macos-latest` / `windows-latest` 三平台(所有 PR 都跑三平台),`fail-fast: false`(一条红不该让另外两条看不见)。每平台:`bun run typecheck` → `bun run depcheck` → 编译 `cli.ts` / `docs.ts` / `setup.ts` → 编译版 sidecar smoke → `bun run test`。
+- **build · ${{ matrix.os }}** —— 进 `dev` 的 PR 只跑 `ubuntu-latest`;合并队列、推送、进 `master` 的发版 PR、叠起来的 PR 跑 `ubuntu-latest` / `macos-latest` / `windows-latest` 三平台,`fail-fast: false`(一条红不该让另外两条看不见)。每平台:`bun run typecheck` → `bun run depcheck` → 编译 `cli.ts` / `docs.ts` / `setup.ts` → 编译版 sidecar smoke → `bun run test`。
 - **node · core suite** —— `npm run test:node`,同一套源码在 node 下再跑一遍。这条不是冗余:`bun:sqlite` 的 URI 打开方式、`bun:test` 的 import,在 Mac 上看着好好的,换个运行时就炸。本地复现就是 `npm run test:node`。
+- **ci · gate** —— 汇总:上面任何一个作业红了 / 取消了就红,跳过的不算。dev 的规则集只要求这一条(不直接要求 `build · <os>`:矩阵作业被跳过时只报一条名字没展开的检查,只改文档的 PR 会永远等着)。
 - **changes · paths** —— 一个只算一件事的小作业(`dorny/paths-filter`):这一推里 `apps/desktop/**` 动没动过。
 - **pr · 测试只增不减 + 红/绿** —— 只在 PR 上跑:测试变少/变松要在描述里写理由,修 bug 的 PR 描述里要有 `## 红/绿`。规矩和判法见 [verify.md](verify.md#测试只增不减)。
 - **e2e**(vitest e2e 配置)所有 PR 和 master 推送都跑,dev 的日常推送不跑。
@@ -13,7 +14,7 @@
 
 ## 一次 PR CI 就算数
 
-PR CI 三平台绿 = 合入门 = 部署门。`dev` 推送先比对 `git rev-parse HEAD^{tree}` 与已成功 PR CI 的 merge-ref tree 回执;完全相同才复用,轻量作业会写明 PR run URL。回执缺失/过期、API 不可用、旧版两平台运行、tree 不同(例如分支落后 dev)都走原有完整 CI;`master` 一律照旧全跑。纯 Markdown 的路径跳过规则保留。
+**合并队列三平台绿 = 合入门 = 部署门**(2026-11-27 起)。进 `dev` 的 PR 只跑 Linux(快速反馈,不要求先跟 dev 同步);`ci land` 把它排进 GitHub 合并队列,队列把「dev + 排在前面的 + 这一个」拼成一个提交,在 `merge_group` 上跑三平台和全套作业,绿了才快进进 `dev`,红了踢出来。唯一的必过检查是汇总作业 `ci · gate`。`dev` 推送先比对 `git rev-parse HEAD^{tree}` 与已成功的队列(或三平台 PR)CI 的 tree 回执;完全相同才复用,轻量作业会写明 PR run URL。回执缺失/过期、API 不可用、旧版两平台运行、tree 不同(例如分支落后 dev)都走原有完整 CI;`master` 一律照旧全跑。纯 Markdown 的路径跳过规则保留。
 
 部署前不再本机 `verify --full`,除非部署的 tree 没被 CI 跑过;这时先补验证,重型测试放专用 Mac mini。部署后主动跑 `selftest phone`、`selftest chat`、`selftest workbench` 和本次新增路由的闭环。4h soak 后台跑,只有改开机/关机/重启顺序才等待它,并用 `--min-restarts 1`。
 
@@ -21,7 +22,7 @@ PR CI 三平台绿 = 合入门 = 部署门。`dev` 推送先比对 `git rev-pars
 
 同 PR 的新运行仍取消旧运行;`ci land` 按 workflow/作业名和运行时间或 run ID 取最新检查,无 startedAt 的 cancelled 也可用 run ID 比较。`ci triage` 取同 SHA 最新运行,同一轮里有更新成功同名 job 才忽略旧 cancelled;新失败不能被旧成功掩盖。
 
-`wechat-cc ci land <最上层 PR>` 仍支持串行合入叠加分支。在等待 CI 前检查最底层是否包含当前 dev;落后时要求先 rebase 并推送再运行。等待期间 dev 变化直接停止,不能拿旧 CI 合入新 base。空 rollup 不算绿,默认至少 5 条非 skipped 检查;纯文档给 `--min-checks 1`。串内下层 squash 后上层仍按旧 head rebase,最终是否复用由 tree 回执决定,不同就完整跑。合并仍带 `--match-head-commit`,由指定整合者在自己的 detached worktree 串行执行。
+`wechat-cc ci land <最上层 PR>` 等 PR 的 CI 绿了用 `gh pr merge --auto` 排进合并队列,等到合进去;离开队列又没合 ⇒ 队列那一轮红了(退出码 1)。不要求 PR 先跟 dev 同步,等待期间 dev 被合了别的也不停 —— 组合起来对不对,队列那一轮会测。叠加分支照旧支持:下层合进去以后上层 rebase 到 dev、推上去,再用新 head 排进队列(`--auto` 会等它的新 CI)。`--direct` 不走队列、照老办法:要求跟 dev 同步、PR 上三平台绿,等待期间 dev 变了就停 —— 只在队列关掉时用。空 rollup 不算绿,默认至少 5 条非 skipped 检查;纯文档给 `--min-checks 1`。串内下层 squash 后上层仍按旧 head rebase,最终是否复用由 tree 回执决定,不同就完整跑。合并仍带 `--match-head-commit`,由指定整合者在自己的 detached worktree 串行执行。
 
 PR 标题/正文由 `test-shrink-check.ts` 用 GITHUB_TOKEN (`GH_TOKEN`) 调 `gh api repos/{repo}/pulls/{n}` 读取当前值;API 失败才退回事件 env。改正文后直接 rerun,无需空提交或 close/reopen。
 
