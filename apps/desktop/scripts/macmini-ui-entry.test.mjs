@@ -3,7 +3,7 @@ import { supportsAppSnapshot } from './macmini-app-snapshot.mjs'
 import { test, expect } from 'vitest'
 import { assertPushedSource, browserHarness, sshInvocation } from './macmini-ui-protocol.mjs'
 import { main } from './macmini-ui.mjs'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 
 const jsonBody = input => JSON.parse(input.subarray(4 + input.readUInt32BE(0)))
 
@@ -73,9 +73,17 @@ test('browser transport is isolated from the App and native desktop wrappers', (
   const remote=readFileSync(new URL('./macmini-ui-remote.mjs',import.meta.url),'utf8')
   expect(remote).toContain("probe.listen(4198,'127.0.0.1'")
   expect(remote).toContain('Browser snapshot changed while queued')
-  expect(remote).toContain("'t5-conversation.spec.ts'")
-  expect(remote).toContain("'task-detail-minimal.spec.ts'")
-  expect(remote).toContain("'workbench-line-review.spec.ts'")
+})
+
+test('mini 浏览器道只跑出截图的 spec:恰好是会往 WECHAT_CC_DESIGN_SHOTS 写图的那些(断言交给 CI 的 desktop-e2e)',()=>{
+ const remote=readFileSync(new URL('./macmini-ui-remote.mjs',import.meta.url),'utf8')
+ const suites=remote.match(/const specs=phase==='before' \? (\[[^\]]*\]) : (\[[^\]]*\])/)
+ expect(suites).not.toBeNull()
+ const after=JSON.parse(suites[2].replaceAll("'",'"').replace(/\s+/g,''))
+ const dir=new URL('../playwright/',import.meta.url)
+ const shooting=readdirSync(dir).filter(f=>f.endsWith('.spec.ts')&&readFileSync(new URL(f,dir),'utf8').includes('WECHAT_CC_DESIGN_SHOTS')).sort()
+ expect([...after].sort()).toEqual(shooting)
+ expect(JSON.parse(suites[1].replaceAll("'",'"').replace(/\s+/g,''))).toEqual(['design-unify-shots.spec.ts','cc-alive-shots.spec.ts'])
 })
 
 test('browser launch uses the known lab Chromium without changing product or App launchers',()=>{
@@ -124,11 +132,6 @@ test('reply speaker transports the registered App flow', () => {
 })
 
 
-test('B3 includes its page regressions',()=>{
- const remote=readFileSync(new URL('./macmini-ui-remote.mjs',import.meta.url),'utf8')
- for(const spec of ['memory.spec.ts','settings-projects.spec.ts'])expect(remote).toContain("'"+spec+"'")
-})
-
 test('attention UI evidence uses the locked browser lane and a test-only baseline harness',()=>{
  const remote=readFileSync(new URL('./macmini-ui-remote.mjs',import.meta.url),'utf8')
  const receiver=readFileSync(new URL('./macmini-browser-snapshot.mjs',import.meta.url),'utf8')
@@ -142,14 +145,6 @@ test('attention UI evidence uses the locked browser lane and a test-only baselin
 
 
 
-
-test('CLI setup runs its regression after the baseline',()=>{
- const remote=readFileSync(new URL('./macmini-ui-remote.mjs',import.meta.url),'utf8')
- const suites=remote.match(/const specs=phase==='before' \? (\[[^\]]*\]) : (\[[^\]]*\])/)
- expect(suites).not.toBeNull()
- expect(suites[1]).not.toContain("'cli-setup.spec.ts'")
- expect(suites[2]).toContain("'cli-setup.spec.ts'")
-})
 
 
 test('unified acceptance uses the bounded suite',()=>{
