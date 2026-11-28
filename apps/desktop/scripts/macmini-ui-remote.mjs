@@ -170,11 +170,13 @@ async function executeRemote(inputStream, executorDir, lifecycle) {
     // Reject an occupied port rather than accidentally reading an older shim.
     await new Promise((resolve, reject) => { const probe=createServer(); probe.once('error',reject);probe.listen(4198,'127.0.0.1',()=>probe.close(resolve)) })
     const phase=browserSnapshot?.phase ?? 'after'
+    // mini 的浏览器道只出截图(2026-11-27 主人同意):断言由 CI 的 desktop-e2e 全量跑(同一个 Chromium、整个 playwright 目录),
+    // 这里再跑一遍只是重复。留下的是会往 WECHAT_CC_DESIGN_SHOTS 写图的那些 spec —— 截图是 mini 独有的东西。
     const specs=phase==='before' ? ['design-unify-shots.spec.ts','cc-alive-shots.spec.ts'] : [
-      'roster-dock.spec.ts','butler-checkup.spec.ts','phone-connect.spec.ts','cli-setup.spec.ts','cc-alive-shots.spec.ts','companion-controls.spec.ts','companion-entry.spec.ts','companion-life.spec.ts','now-hero.spec.ts','companion-status.spec.ts','pet-lab.spec.ts',
-      't5-conversation.spec.ts','workbench-layout.spec.ts','task-detail-minimal.spec.ts','workbench-line-review.spec.ts','design-unify-shots.spec.ts','hook-trust.spec.ts','memory.spec.ts','settings-projects.spec.ts']
-    // 这三份随各自分支才进仓库;旧快照没有就不跑,其余缺文件仍由 Playwright 报错。
-    const optionalSpecs=new Set(['roster-dock.spec.ts','butler-checkup.spec.ts','phone-connect.spec.ts','cli-setup.spec.ts'])
+      'design-shots.spec.ts','design-unify-shots.spec.ts','cc-alive-shots.spec.ts','butler-checkup.spec.ts','converse-reply-extras.spec.ts',
+      'now-minimal-requests.spec.ts','t5-conversation.spec.ts','task-detail-minimal.spec.ts','workbench-layout.spec.ts','workbench-preview.spec.ts','workbench-origin.spec.ts']
+    // 随各自分支才进仓库的;旧快照没有就不跑,其余缺文件仍由 Playwright 报错。
+    const optionalSpecs=new Set(['butler-checkup.spec.ts','design-shots.spec.ts','converse-reply-extras.spec.ts','now-minimal-requests.spec.ts','workbench-preview.spec.ts','workbench-origin.spec.ts'])
     const presentSpecs=specs.filter(spec=>!optionalSpecs.has(spec)||existsSync(join(project,'apps/desktop/playwright',spec)))
     const home=join(run,'home');await mkdir(home,{mode:0o700})
     const browserExecutable=mini.rustc?undefined:legacyLabPath(await insideLab(join(config.browserRuntimeRoot??config.root,'browser-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell')))

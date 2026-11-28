@@ -2,6 +2,13 @@
 
 主人日常使用的 Mac 不运行图形测试，不接管鼠标、键盘、焦点或窗口，也不运行重型原生构建。`bun run verify` 在主 Mac 跑，不上 mini；主 Mac 1 分钟负载 ≥ 8 时不跑全量验证。UI 测试与重型原生构建在下述明确登记的 Mac mini 上执行，默认仍为 `homes-mac-mini` 对应的 `Home’s Mac mini`，没有本机回退。根目录 `AGENTS.md` 是协作规则入口。
 
+## mini 做什么、不做什么（2026-11-27 主人同意）
+
+- **断言以 CI 为准。** CI 的 `desktop-e2e` 在每个动了桌面的 PR 和合并队列那一轮跑整个 `apps/desktop/playwright`（Chromium）。mini 原来的标准 browser 道只跑其中 19 个 spec、同一个内核，通过与否是 CI 的子集，不再当验收门。
+- **mini 的浏览器道只出截图。** 跑的是会往 `WECHAT_CC_DESIGN_SHOTS` 写图的那些 spec（`macmini-ui-entry.test.mjs` 按仓库现状核对这份清单：加了出图的 spec 就得加进来）。截图给人和模型看排版、对照前后版本；这是 CI 给不了的。
+- **mini 独有、继续是门的：** App（iOS 模拟器 + Maestro）、原生桌面（Tauri 窗口内、Appium）、截图审阅。
+- 「UI 验收必须先在 mini 通过」（AGENTS.md）指的就是这三样；单纯 Playwright 断言绿不绿看 CI。
+
 ## 所有 job 共用机器锁（2026-11-06）
 
 `cc-alive-2` 的第二批动作验收使用同一受控快照入口：桌面 browser 对 before/after 都运行 `cc-alive-shots.spec.ts`，只覆盖同一份测试 harness，不覆盖产品代码；App 用已登记的 `app-maestro cc-motion`，进入现有 `dev-e2e?op=cc-motion` 离线检查页。截图均为合成信号，不能作为真实模型、配对或音频证据。App 使用核验过的增量源码传输，避免重复完整 archive。
