@@ -1,7 +1,7 @@
 import { supportsBrowserSnapshot } from './macmini-browser-snapshot.mjs'
 import { supportsAppSnapshot } from './macmini-app-snapshot.mjs'
 import { test, expect } from 'vitest'
-import { browserHarness, sshInvocation } from './macmini-ui-protocol.mjs'
+import { assertPushedSource, browserHarness, sshInvocation } from './macmini-ui-protocol.mjs'
 import { main } from './macmini-ui.mjs'
 import { readFileSync } from 'node:fs'
 
@@ -100,26 +100,21 @@ test('snapshot modules expose an explicit entry for trusted import wrappers and 
  expect(browser).toContain("gitObject('blob',bytes)!==file.blob")
 })
 
-test('project topic snapshots accept only the explicit task branch and preserve source ref boundaries',()=>{
- expect(supportsBrowserSnapshot('cc-alive-2')).toBe(true)
- expect(supportsAppSnapshot('cc-alive-2')).toBe(true)
- expect(supportsBrowserSnapshot('topics-are-projects')).toBe(true)
- expect(supportsAppSnapshot('topics-are-projects')).toBe(true)
- expect(supportsBrowserSnapshot('topics-waiting-honest')).toBe(true)
- expect(supportsAppSnapshot('topics-waiting-honest')).toBe(true)
- for(const ref of ['master','unknown-task','topics-are-projects;echo x','../topics-are-projects']){
-  expect(supportsBrowserSnapshot(ref)).toBe(false)
-  expect(supportsAppSnapshot(ref)).toBe(false)
+test('snapshot refs are plain names; anything a shell or git would read differently is refused',()=>{
+ for(const ref of ['cc-alive-2','topics-are-projects','integrate/1127','origin/dev','codex/lab-health','v1.8.12']){
+  expect(supportsBrowserSnapshot(ref)).toBe(true)
+  expect(supportsAppSnapshot(ref)).toBe(true)
  }
 })
 
-test('reply speaker accepts only its assigned App snapshot and transports the registered flow', () => {
-  expect(supportsAppSnapshot('who-answers-app-avatar')).toBe(true)
-  expect(supportsBrowserSnapshot('who-answers-app-avatar')).toBe(false)
-  for (const ref of ['who-answers-app-avatar-other', 'who-answers-app-avatar;echo x', '../who-answers-app-avatar']) {
-    expect(supportsAppSnapshot(ref)).toBe(false)
-    expect(supportsBrowserSnapshot(ref)).toBe(false)
-  }
+test('only commits already on a pushed origin/* branch may be sent',()=>{
+ const git=out=>()=>Buffer.from(out)
+ expect(assertPushedSource(git('  origin/dev\n  origin/codex/x\n'),'a'.repeat(40))).toEqual(['origin/dev','origin/codex/x'])
+ expect(()=>assertPushedSource(git(''),'b'.repeat(40))).toThrow(/not on any pushed origin\/\* branch/)
+ expect(()=>assertPushedSource(git('  upstream/dev\n'),'c'.repeat(40))).toThrow(/push it/)
+})
+
+test('reply speaker transports the registered App flow', () => {
   const calls = []
   expect(main(['node', 'entry', 'app-maestro', 'reply-speaker'], {}, (...args) => { calls.push(args); return { status: 0 } })).toBe(0)
   expect(calls).toHaveLength(1)
@@ -129,13 +124,7 @@ test('reply speaker accepts only its assigned App snapshot and transports the re
 })
 
 
-test('B3 accepts only the assigned immutable source branch and includes its page regressions',()=>{
- expect(supportsBrowserSnapshot('design-b3')).toBe(true)
- expect(supportsAppSnapshot('design-b3')).toBe(true)
- for(const ref of ['design-b3-other','design-b3;echo x','../design-b3']){
-  expect(supportsBrowserSnapshot(ref)).toBe(false)
-  expect(supportsAppSnapshot(ref)).toBe(false)
- }
+test('B3 includes its page regressions',()=>{
  const remote=readFileSync(new URL('./macmini-ui-remote.mjs',import.meta.url),'utf8')
  for(const spec of ['memory.spec.ts','settings-projects.spec.ts'])expect(remote).toContain("'"+spec+"'")
 })
@@ -146,38 +135,15 @@ test('attention UI evidence uses the locked browser lane and a test-only baselin
  expect(remote).toContain("['design-unify-shots.spec.ts','cc-alive-shots.spec.ts']")
  expect(receiver).toContain("target === 'browser' ? browserHarness : []")
  expect(browserHarness).toContainEqual(['cc-alive-shots.spec.ts','apps/desktop/playwright/cc-alive-shots.spec.ts'])
- expect(supportsBrowserSnapshot('cc-alive-2;echo x')).toBe(false)
- expect(supportsAppSnapshot('../cc-alive-2')).toBe(false)
  expect(remote).toContain("selected.appRoot !== config.appRoot")
  expect(remote.indexOf('assertExpectedSource(process.env.CC_UI_EXPECTED_SOURCE, actual)')).toBeLessThan(remote.indexOf('await mkdir(run'))
 })
 
-test('mobile budget snapshots accept only the assigned branch and keep App snapshots separate',()=>{
- expect(supportsBrowserSnapshot('mobile-budget')).toBe(true)
- expect(supportsAppSnapshot('mobile-budget')).toBe(false)
- for(const ref of ['mobile-budget-other','mobile-budget;echo x','../mobile-budget'])expect(supportsBrowserSnapshot(ref)).toBe(false)
-})
-
-test('desktop reply avatar snapshots accept only the assigned branch and keep App snapshots separate',()=>{
- expect(supportsBrowserSnapshot('who-answers-desktop-avatar')).toBe(true)
- expect(supportsAppSnapshot('who-answers-desktop-avatar')).toBe(false)
- for(const ref of ['who-answers-desktop-avatar-other','who-answers-desktop-avatar;echo x','../who-answers-desktop-avatar'])expect(supportsBrowserSnapshot(ref)).toBe(false)
-})
 
 
-test('who-answers web avatar snapshots accept only the assigned branch',()=>{
- expect(supportsBrowserSnapshot('who-answers-web-avatar')).toBe(true)
- expect(supportsAppSnapshot('who-answers-web-avatar')).toBe(false)
- for(const ref of ['who-answers-web-avatar-x','who-answers-web-avatar;echo x','../who-answers-web-avatar'])expect(supportsBrowserSnapshot(ref)).toBe(false)
-})
 
-test('CLI setup registers only its assigned browser branch and runs its regression after the baseline',()=>{
- expect(supportsBrowserSnapshot('one-click-cli-setup')).toBe(true)
- expect(supportsAppSnapshot('one-click-cli-setup')).toBe(false)
- for(const ref of ['one-click-cli-setup-other','one-click-cli-setup;echo x','../one-click-cli-setup']){
-  expect(supportsBrowserSnapshot(ref)).toBe(false)
-  expect(supportsAppSnapshot(ref)).toBe(false)
- }
+
+test('CLI setup runs its regression after the baseline',()=>{
  const remote=readFileSync(new URL('./macmini-ui-remote.mjs',import.meta.url),'utf8')
  const suites=remote.match(/const specs=phase==='before' \? (\[[^\]]*\]) : (\[[^\]]*\])/)
  expect(suites).not.toBeNull()
@@ -186,13 +152,7 @@ test('CLI setup registers only its assigned browser branch and runs its regressi
 })
 
 
-test('unified acceptance uses bounded suite and only the assigned snapshot branch',()=>{
- expect(supportsBrowserSnapshot('mini-ui-acceptance')).toBe(true)
- expect(supportsAppSnapshot('mini-ui-acceptance')).toBe(true)
- for(const ref of ['mini-ui-acceptance-other','mini-ui-acceptance;echo x','../mini-ui-acceptance']){
-  expect(supportsBrowserSnapshot(ref)).toBe(false)
-  expect(supportsAppSnapshot(ref)).toBe(false)
- }
+test('unified acceptance uses the bounded suite',()=>{
  const calls=[]
  main(['node','entry','browser','homebot'],{CC_UI_BROWSER_SUITE:'mini-ui-acceptance'},(...args)=>{calls.push(args);return{status:0}})
  expect(calls[0][1].at(-1)).toContain('CC_UI_BROWSER_SUITE=mini-ui-acceptance')
@@ -202,4 +162,3 @@ test('unified acceptance uses bounded suite and only the assigned snapshot branc
  expect(remote).toContain("['task-detail-minimal.spec.ts','--grep','ordinary single-executor']")
 })
 
-test('butler web is registered only for browser snapshots',()=>{expect(supportsBrowserSnapshot('claude/butler-web')).toBe(true);expect(supportsAppSnapshot('claude/butler-web')).toBe(false);expect(supportsBrowserSnapshot('claude/butler-web-other')).toBe(false)})

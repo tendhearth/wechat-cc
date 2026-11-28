@@ -137,7 +137,7 @@ node apps/desktop/scripts/macmini-ui.mjs capture
 
 ## App / Maestro lane
 
-App 与桌面共用 mini 身份校验、BatchMode SSH、两端命令白名单、执行锁和每轮日志；没有主工作 Mac 回退。App 源码独立登记在 `active.json.appRoot`，不覆盖桌面的 `root`。快照必须来自已审阅的 `origin/dev`、`app-maestro-build3` 或主人指定验收的 `design-unify-b1-fixes`，仅传 Git archive，不复制 node_modules、忽略文件、账号或原生签名材料。
+App 与桌面共用 mini 身份校验、BatchMode SSH、两端命令白名单、执行锁和每轮日志；没有主工作 Mac 回退。App 源码独立登记在 `active.json.appRoot`，不覆盖桌面的 `root`。快照只能来自**已经推到 GitHub 的提交**（在某个 `origin/*` 分支上，`git branch -r --contains` 查得到）；分支名只许字母、数字和 `._/-`。原来这里是一份手写的分支名单，每次验收都要临时往里加名字（2026-11-27 改掉）；名单代表的意思是「只送别人看得到的代码」，现在直接查这一条。仅传 Git archive 或校验过的增量，不复制 node_modules、忽略文件、账号或原生签名材料。
 
 App 的新客户端与快照发送器共用启动器，并与桌面共享 `active.json` 和家族锁。旧版 `app-run.mjs`、`app-snapshot.mjs` 与 `app-executor/` 在过渡期按原路径保留。
 
