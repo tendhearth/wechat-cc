@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import z from 'zod'
 import { loadAgentConfig } from '../lib/agent-config'
 import { autoshipWindowStatus, loadAutoshipConfig, patchAutoshipConfig } from '../lib/autoship-config'
+import { machineIdleSeconds } from '../lib/machine-idle'
 import { readApiInfo } from '../lib/api-info'
 import { log } from '../lib/log'
 import { readJsonObject, writeFileAtomic } from '../lib/json-file'
@@ -162,6 +163,7 @@ export function defaultAutoshipDeps(stateDir: string, sourceRoot: string | null,
     settings,
     writeSettings: patch => patchAutoshipConfig(stateDir, patch),
     repoUrl,
+    idleSeconds: () => machineIdleSeconds(),
     async targetMismatch() {
       const result = await checkTarget()
       return 'reason' in result ? result.reason : null
@@ -293,7 +295,7 @@ export function defaultAutoshipDeps(stateDir: string, sourceRoot: string | null,
                 // 就绪返回后只重读开关和时间窗，随后交给备份与换盘。
                 const config = settings()
                 if (config.auto_ship !== true) return '自动部署已关闭。'
-                return autoshipWindowStatus(config, Date.now())
+                return autoshipWindowStatus(config, Date.now(), await machineIdleSeconds())
               },
             },
           })

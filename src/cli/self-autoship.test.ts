@@ -60,6 +60,7 @@ function fixture() {
     installed: vi.fn(() => ({ version, sha: '111111111' })),
     repo: vi.fn(() => repo),
     targetMismatch: vi.fn(async (): Promise<string | null> => null),
+    idleSeconds: vi.fn(async (): Promise<number | null> => 0),
     pendingTransaction: vi.fn((): string | null => null),
     clearTransaction: vi.fn(),
     repairLedger: vi.fn((): string | null => null),
@@ -262,6 +263,22 @@ describe('automatic deployment window', () => {
     expect(autoshipWindowStatus(config, time(22, 30))).toBeNull()
     expect(autoshipWindowStatus(config, time(0, 0))).toBeNull()
     expect(autoshipWindowStatus(config, time(4, 15))).toContain('下次窗口')
+  })
+  it('outside the window, a machine nobody has touched for 30 minutes (configurable, at least 5) is allowed; unknown idle counts as someone there', () => {
+    expect(autoshipWindowStatus({}, time(12, 0), 30 * 60)).toBeNull()
+    expect(autoshipWindowStatus({}, time(12, 0), 30 * 60 - 1)).toContain('没人用够 30 分钟')
+    expect(autoshipWindowStatus({}, time(12, 0), null)).toContain('下次窗口')
+    expect(autoshipWindowStatus({}, time(12, 0), Number.NaN)).toContain('下次窗口')
+    expect(autoshipWindowStatus({ auto_ship_idle_min: 60 }, time(12, 0), 45 * 60)).toContain('没人用够 60 分钟')
+    expect(autoshipWindowStatus({ auto_ship_idle_min: 1 }, time(12, 0), 4 * 60)).toContain('没人用够 5 分钟')
+    expect(autoshipWindowStatus({ auto_ship_idle_min: 1 }, time(12, 0), 5 * 60)).toBeNull()
+  })
+  it('an idle machine outside the window goes on to the normal checks', async () => {
+    const { deps, run } = fixture()
+    deps.now = () => time(12, 0)
+    deps.idleSeconds = vi.fn(async () => 3600)
+    expect((await run()).message).not.toContain('下次窗口')
+    expect(deps.targetMismatch).toHaveBeenCalled()
   })
   it('skips before any target or repo work outside the window and reports the next local window', async () => {
     const { deps, run } = fixture()

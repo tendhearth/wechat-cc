@@ -70,6 +70,8 @@ interface AutoshipDeps {
   writeSettings(patch: Partial<AutoshipConfig>): void
   repoUrl(): string | null
   targetMismatch(): Promise<string | null>
+  /** 键鼠多少秒没动;探不到 null。 */
+  idleSeconds(): Promise<number | null>
   pendingTransaction(): string | null
   clearTransaction(): void
   repairLedger(): string | null
@@ -190,7 +192,7 @@ export async function runAutoshipCommand(deps: AutoshipDeps, flags: Flags = {}):
     if (decideAutoship(decision) === 'halted') return skip('自动部署已停机。运行 self autoship --unhalt 解除。')
     if (state.pause_reason) return skip(`自动部署暂停：${state.pause_reason} 修复后运行 self autoship --unhalt。`)
 
-    const window = autoshipWindowStatus(settings, deps.now())
+    const window = autoshipWindowStatus(settings, deps.now(), await deps.idleSeconds())
     if (window) return skip(window)
 
     const mismatch = await deps.targetMismatch()
