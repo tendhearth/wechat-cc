@@ -25,6 +25,9 @@ import {makeReportOutboxStore} from '../reports/outbox'
 import {makeReportSink} from '../reports/report-sink'
 import {TIER_PROFILES} from '../../domain/user-tier'
 
+// 记录本按 JSON 行进提示词:Windows 路径里的反斜杠会被转义成两个反斜杠,原样找路径在 Windows 上永远找不到(not.toContain 永远假通过)。
+const asJson = (p: string) => JSON.stringify(p).slice(1, -1)
+
 vi.setConfig({testTimeout:30_000})
 const cleanups:Array<()=>Promise<void>>=[]
 afterEach(async()=>{for(const cleanup of cleanups.splice(0))await cleanup()})
@@ -1010,8 +1013,8 @@ it.each([
   expect(f.calls[2]!.executor).toBe('openai')
   expect(f.calls[2]!.context.workbenchTaskId).toBe(right.id)
   expect(f.calls[2]!.text).toContain('Claude 专属备注')
-  expect(f.calls[2]!.text).toContain(right.path)
-  expect(f.calls[2]!.text).not.toContain(left.path)
+  expect(f.calls[2]!.text).toContain(asJson(right.path))
+  expect(f.calls[2]!.text).not.toContain(asJson(left.path))
   await f.finish(2,'状态：做完')
   await expect.poll(()=>f.store.plans.get(id)?.state).toBe('done')
 })
@@ -1225,7 +1228,7 @@ it('projects ledger rows by baton for both the model opening and matter_notes',a
   await expect.poll(()=>f.calls.at(-1)?.executor).toBe('openai')
   const next=f.calls.at(-1)!
   expect(next.text).toContain('OWN_NOTE')
-  expect(next.text).toContain(a.right.path)
+  expect(next.text).toContain(asJson(a.right.path))
   expect(next.text).not.toMatch(/PEER_BRANCH|peer\.txt/)
   expect(JSON.stringify(f.service.matterNotes(`workbench/${a.right.id}`,a.id))).not.toContain('PEER_BRANCH')
   await f.finish(f.calls.length-1,'状态：做完')
@@ -1252,7 +1255,7 @@ it('shares parallel wrap-ups and output summaries with the existing scoped token
     expect.objectContaining({kind:'artifact',text:'1 个文件 · share-left.txt'}),
   ]))
   expect(JSON.stringify(guest)).not.toContain(sha)
-  expect(JSON.stringify(guest)).not.toContain(a.left.path)
+  expect(JSON.stringify(guest)).not.toContain(asJson(a.left.path))
   expect(JSON.stringify(guest)).not.toContain('RAW_TRANSCRIPT_CANARY')
   expect(f.service.shareSay(token,'有哪些版本？')).toEqual({ok:true})
   await expect.poll(()=>prompt).toContain('RIGHT_SHARE_WRAPUP')
