@@ -34,6 +34,8 @@
 
 ## lab 放外置盘
 
+**2026-11-27 实测：Home’s mini 上暂时不能搬。** macOS 不让图形会话里的 launchd 任务读外置盘（`/Volumes/*` 报 `Operation not permitted`），Appium 的 LaunchAgent 和模拟器服务都属于这类；经 SSH 跑的命令不受影响，所以复制、核对都正常，换成链接后 Appium 却起不来（`spawn failed`，退出码 78）。要搬，得先有人在 mini 自己的屏幕上到「系统设置 › 隐私与安全性」给 node 和模拟器服务开外置盘访问，再用临时 LaunchAgent 读一下外置盘确认。没开之前 lab 留在内置盘，靠下面的自动清理控制占用。`status` 的 `health` 在 lab 真实路径落在 `/Volumes/` 下时会报 `lab_on_external_volume`。
+
 lab 可放在内置盘或已挂载的外置盘。Home’s mini 迁移时，由维护者等当前 job 完成，持 `~/ci/lock` 暂停 Appium LaunchAgent，把整个 `/Users/home/cc-ui-lab` 迁到 `/Volumes/Build/cc-ui-lab`。确认旧路径已腾空、外置盘上的 lab 可读写后，在原位置建立符号链接。
 
 ```sh
@@ -43,6 +45,10 @@ ln -s /Volumes/Build/cc-ui-lab /Users/home/cc-ui-lab
 `active.json` 中用旧入口写的绝对路径仍可经链接访问。Appium 的 `com.tendhearth.cc-ui-lab.appium` LaunchAgent 继续使用原路径（包括 `/Users/home/cc-ui-lab/runtime-20261030`）。确认卷已挂载且链接可用后再恢复 Appium 和 job。执行器以 lab 和候选路径的 `realpath` 做包含检查，拒绝经链接跳出 lab 的路径。
 
 App（完整归档或校验增量）和 browser 快照在原子更新 `active.json` 后，持同一把机器锁清理旧快照。保留 `active.json` 任意字段引用的快照，即使字段指向快照内的文件或子目录。另按目录名末尾的时间戳分别保留最新两份未引用的 App 快照和 browser 快照。清理范围是 lab 真实目录的直接子目录，且目录名须匹配 `^(app|browser)-[0-9a-f]{40}-[0-9]+$`。符号链接、runtime、executor 和工具目录均跳过。每次删除失败只记一行日志，本次快照仍算激活成功。
+
+## 健康检查
+
+`status` 的输出带 `health`：lab 所在盘的剩余空间、`~/ci/lock` 有没有人拿着（拿了多久、持有进程还在不在）、App 和 browser 快照各几份、lab 的真实路径。每个要排队的任务拿锁之前也看一遍，有问题打一行 `{"step":"lab-health","warnings":[…]}`，只提醒、不拦。会报的：剩余不足 20 GiB（`disk_low`）、持有进程已死（`lock_stale`，下一个任务会收回）、活着但拿了两小时以上（`lock_held_long`）、某种快照超过 4 份（`snapshots_piling_up`，说明自动清理没起作用）、lab 在外置盘上（`lab_on_external_volume`）。读不到的部分记成 `*_unknown`，检查本身不会让任务失败。
 
 ## 次级 Mini 的隔离入口（2026-11-01）
 

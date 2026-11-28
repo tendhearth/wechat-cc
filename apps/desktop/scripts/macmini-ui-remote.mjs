@@ -5,6 +5,7 @@ import { createWriteStream, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { jobLifecycle } from './macmini-job-lifecycle.mjs'
 import { acquireMachineLock, machineGateOptions } from './macmini-machine-lock.mjs'
+import { labHealth } from './macmini-lab-health.mjs'
 import { createServer } from 'node:net'
 import { basename, join, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -92,6 +93,7 @@ async function executeRemote(inputStream, executorDir, lifecycle) {
     try { controller = await api('/status') } catch (error) { controller = { ready: false, message: error.message } }
     console.log(JSON.stringify({ identity, root, sourceCommit: browserSnapshot?.commit ?? textCommand('/usr/bin/git', ['-C', project, 'rev-parse', 'HEAD']),
       console: consoleState(), endpoint, controller,
+      health: await labHealth({ labHome, lockPath: join(mini.homeDir, 'ci/lock') }),
       nativeAcceptance: 'requires an unlocked mini and its system UI Automation authorization; status does not prove either',
       productionAccess: false, localDesktopFallback: false }, null, 2))
     return controller.ready ? 0 : 1
@@ -100,6 +102,10 @@ async function executeRemote(inputStream, executorDir, lifecycle) {
   const executionRoot = request.command.startsWith('app-')
     ? await insideLab(config.appRoot ?? (() => { throw Error('APP_BLOCKED: configure an App snapshot first') })()) : root
 
+  // Say what looks wrong before queueing: a full disk or a stuck lock otherwise
+  // shows up only as a slow, confusing failure later. Warnings never block.
+  const preflight = await labHealth({ labHome, lockPath: join(mini.homeDir, 'ci/lock') })
+  if (preflight.warnings.length) console.log(JSON.stringify({ step: 'lab-health', warnings: preflight.warnings }))
   // One machine gate covers every CPU lane, including preparation and native builds.
   await acquireMachineLock({ path: join(mini.homeDir, 'ci/lock'), lane: request.command,
     sha: request.command.startsWith('app-')

@@ -12,7 +12,7 @@ const digest = bytes => createHash('sha256').update(bytes).digest('hex')
 
 export function executorBundle(read = readFileSync) {
   const modules = ['app-snapshot', 'browser-snapshot', 'embedded-ui', 'job-lifecycle',
-    'lab-executor', 'machine-lock', 'snapshot-retention', 'source-manifest',
+    'lab-executor', 'machine-lock', 'lab-health', 'snapshot-retention', 'source-manifest',
     'ui-app', 'ui-protocol', 'ui-remote'].map(name => `macmini-${name}.mjs`)
   const paths = new Map([...modules.map(name => [name, 'apps/desktop/scripts/' + name]), ...browserHarness])
   const bundle = JSON.stringify([...paths.keys()].sort().map(name => [name,
