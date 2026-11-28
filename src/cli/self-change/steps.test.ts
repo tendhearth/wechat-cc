@@ -734,6 +734,42 @@ describe('merge', () => {
     expect(rec.git.some(a => a.join(' ').includes('HEAD:refs/heads/dev'))).toBe(false)
   })
 
+  it('经合并队列合的:树放到这个 PR 的合入提交上,不是 dev 顶端(队列同批可能多快进了别人的)', async () => {
+    const MERGE = 'm'.repeat(40)
+    const s = fakeState({ pr: { number: 77, url: 'u' } })
+    const { deps, rec } = makeFakeDeps({ git: gitReply({ 'rev-parse HEAD': MERGE }), forge: { land: async () => ({ exitCode: 0, message: '合完 1 层(经合并队列)', mergeSha: MERGE }) } })
+    expect(await steps.merge(s, deps)).toEqual({ ok: true, next: 'deploy' })
+    const lines = rec.git.map(a => a.join(' '))
+    expect(lines).toContain(`merge-base --is-ancestor ${MERGE} origin/dev`)
+    expect(lines).toContain(`checkout -q --detach ${MERGE}`)
+    expect(lines).not.toContain('checkout -q --detach origin/dev')
+    expect(s.merge.sha).toBe(MERGE)
+  })
+
+  it('经合并队列合了但拿不到合入提交 ⇒ merge_failed、不部署(不拿 dev 顶端顶替)', async () => {
+    const { deps, rec } = makeFakeDeps({ forge: { land: async () => ({ exitCode: 0, message: 'x', viaQueue: true }) } })
+    const out = await steps.merge(fakeState({ pr: { number: 77, url: 'u' } }), deps)
+    expect(out).toMatchObject({ ok: false, fail: 'merge_failed' })
+    expect(rec.git.map(a => a.join(' '))).not.toContain('checkout -q --detach origin/dev')
+  })
+
+  it('经合并队列合的:合入的树跟 PR 那一轮不一样也不记 rebased(组合是队列那一轮测过的)', async () => {
+    const MERGE = 'm'.repeat(40)
+    const s = fakeState({ ci: { runId: 1, url: null, verdict: 'green', sha: 'd'.repeat(40) }, pr: { number: 77, url: 'u' } })
+    const { deps } = makeFakeDeps({ git: gitReply({ 'rev-parse HEAD': MERGE, 'diff --quiet': { code: 1 } }), forge: { land: async () => ({ exitCode: 0, message: 'x', mergeSha: MERGE, viaQueue: true }) } })
+    await steps.merge(s, deps)
+    expect(s.merge.rebased).toBe(false)
+  })
+
+  it('合入提交核不到在 dev 上 ⇒ merge_failed、不部署,也不退回 dev 顶端', async () => {
+    const MERGE = 'm'.repeat(40)
+    const { deps, rec } = makeFakeDeps({ git: gitReply({ 'merge-base --is-ancestor': { code: 1 } }), forge: { land: async () => ({ exitCode: 0, message: 'x', mergeSha: MERGE }) } })
+    const out = await steps.merge(fakeState({ pr: { number: 77, url: 'u' } }), deps)
+    expect(out).toMatchObject({ ok: false, fail: 'merge_failed' })
+    expect(out.detail).toContain('不部署')
+    expect(rec.git.map(a => a.join(' ')).some(l => l.startsWith('checkout -q --detach origin/dev') || l.startsWith(`checkout -q --detach ${MERGE}`))).toBe(false)
+  })
+
   it('老存盘没有 PR ⇒ 先补开一个再合', async () => {
     const s = fakeState()
     const { deps, rec } = makeFakeDeps()

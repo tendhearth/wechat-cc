@@ -10,7 +10,7 @@
  * 接口单独拎出来是为了 run.integration.test.ts:它的远端是本地裸仓库,没有 GitHub,塞一个「本地 squash」的假件,
  * 照样验 worktree / 分支 / 两条运行互不影响那些 git 上的事。
  */
-import { runCiLand, type CiLandDeps } from '../ci-land'
+import { CI_LAND_EXIT, hasMergeQueueRule, runCiLand, type CiLandDeps } from '../ci-land'
 
 export interface PrRef { number: number; url: string }
 
@@ -18,7 +18,8 @@ export interface Forge {
   /** 这条分支上开着的 PR;没有就开一个(重跑 / `--resume` 不重复开)。 */
   ensurePr(o: { cwd: string; branch: string; base: string; title: string; body: string }): Promise<PrRef>
   /** 按 ci land 的判法看 CI、squash 合进 base。退出码就是 CI_LAND_EXIT。 */
-  land(o: { cwd: string; pr: number; base: string }): Promise<{ exitCode: number; message: string }>
+  /** mergeSha:经合并队列合进去时这个 PR 在 base 上的合入提交(队列可能同批多快进几个,别拿 base 顶端当它)。 */
+  land(o: { cwd: string; pr: number; base: string }): Promise<{ exitCode: number; message: string; mergeSha?: string; viaQueue?: boolean }>
   /** 作废时关掉,免得整合者的 PR 列表里躺着一条永远不会合的。失败只记一笔。 */
   close(o: { cwd: string; pr: number; comment: string }): Promise<void>
 }
@@ -53,8 +54,15 @@ export function ghForge(makeDeps: (cwd: string) => CiLandDeps): Forge {
       return { number: n, url }
     },
     async land(o) {
-      const r = await runCiLand(makeDeps(o.cwd), { top: o.pr, target: o.base, minChecks: 1, timeoutMin: 60 })
-      return { exitCode: r.exitCode, message: r.message }
+      // 走不走队列看 base 的有效规则,不看分支名:队列关掉时自改照旧能用老办法合(#1119 复审)。
+      // 开着队列:PR 的 Linux CI + 队列里三平台那一轮,60 分钟不够宽裕。
+      const deps = makeDeps(o.cwd)
+      const rules = deps.exec('gh', ['api', `repos/{owner}/{repo}/rules/branches/${o.base}`], { cwd: o.cwd, timeoutMs: 60_000 })
+      if (rules.code !== 0) return { exitCode: CI_LAND_EXIT.precondition, message: `查 ${o.base} 的规则失败:${rules.stderr.trim().slice(0, 200)}` }
+      const queue = hasMergeQueueRule(rules.stdout)
+      // 不走队列时用缺省的检查数:只有那样 ci land 才要求 PR 上三平台全绿(minChecks 1 会把它跳过,#1119 复审)。
+      const r = await runCiLand(deps, { top: o.pr, target: o.base, timeoutMin: queue ? 90 : 60, queue, ...(queue ? { minChecks: 1 } : {}) })
+      return { exitCode: r.exitCode, message: r.message, ...(r.mergeSha ? { mergeSha: r.mergeSha } : {}), ...(r.viaQueue ? { viaQueue: true } : {}) }
     },
     async close(o) {
       const deps = makeDeps(o.cwd)

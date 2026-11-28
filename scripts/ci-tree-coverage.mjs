@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 export function eligible(run, receipt, tree, jobs, repo) {
-  return run.event === 'pull_request' && run.status === 'completed' && run.conclusion === 'success'
+  // merge_group = 合并队列那一轮:它跑的就是快进进 dev 的那个提交,三平台全在那里。
+  return ['pull_request', 'merge_group'].includes(run.event) && run.status === 'completed' && run.conclusion === 'success'
     && receipt.version === 1 && receipt.repository === repo && receipt.run === String(run.id)
     // Re-running only failed jobs retains the original changes artifact. GitHub reruns keep GITHUB_SHA.
     && /^[1-9]\d*$/.test(receipt.attempt) && Number(receipt.attempt) <= run.run_attempt && receipt.tree === tree
@@ -23,7 +24,7 @@ export function main(env = process.env, execute) {
   })
   const tree = exec('git', ['rev-parse', 'HEAD^{tree}'])
   if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `tree=${tree}\n`)
-  if (env.GITHUB_EVENT_NAME === 'pull_request') {
+  if (env.GITHUB_EVENT_NAME === 'pull_request' || env.GITHUB_EVENT_NAME === 'merge_group') {
     writeFileSync('ci-tree.json', JSON.stringify({ version: 1, repository: env.GITHUB_REPOSITORY,
       run: env.GITHUB_RUN_ID, attempt: env.GITHUB_RUN_ATTEMPT, tree,
       merge: exec('git', ['rev-parse', 'HEAD']) }))
@@ -53,7 +54,7 @@ export function main(env = process.env, execute) {
   finally { rmSync(dir, { recursive: true, force: true }) }
   if (covered) {
     appendFileSync(env.GITHUB_OUTPUT, `covered=true\nrun=${covered.id}\n`)
-    appendFileSync(env.GITHUB_STEP_SUMMARY, `Tree \`${tree}\` already passed three-platform PR CI: ${covered.html_url}\n`)
+    appendFileSync(env.GITHUB_STEP_SUMMARY, `Tree \`${tree}\` already passed three-platform PR / merge-queue CI: ${covered.html_url}\n`)
     console.log(`Already covered by PR run: ${covered.html_url}`)
   }
 }

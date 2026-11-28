@@ -1,6 +1,6 @@
 # 部署(macOS / launchd)
 
-PR CI 三平台绿 = 合入门 = 部署门。`dev` 推送先比对 `git rev-parse HEAD^{tree}` 与已成功 PR CI 的 merge-ref tree 回执;完全相同才复用,轻量作业会写明 PR run URL。回执缺失/过期、API 不可用、旧版两平台运行、tree 不同(例如分支落后 dev)都走原有完整 CI;`master` 一律照旧全跑。纯 Markdown 的路径跳过规则保留。
+**合并队列三平台绿 = 合入门 = 部署门**(2026-11-27 起)。进 `dev` 的 PR 只跑 Linux(快速反馈,不要求先跟 dev 同步);`ci land` 把它排进 GitHub 合并队列,队列把「dev + 排在前面的 + 这一个」拼成一个提交,在 `merge_group` 上跑三平台和全套作业,绿了才快进进 `dev`,红了踢出来。唯一的必过检查是汇总作业 `ci · gate`。`dev` 推送先比对 `git rev-parse HEAD^{tree}` 与已成功的队列(或三平台 PR)CI 的 tree 回执;完全相同才复用,轻量作业会写明 PR run URL。回执缺失/过期、API 不可用、旧版两平台运行、tree 不同(例如分支落后 dev)都走原有完整 CI;`master` 一律照旧全跑。纯 Markdown 的路径跳过规则保留。
 
 部署前不再本机 `verify --full`,除非部署的 tree 没被 CI 跑过;这时先补验证,重型测试放专用 Mac mini。部署后主动跑 `selftest phone`、`selftest chat`、`selftest workbench` 和本次新增路由的闭环。4h soak 后台跑,只有改开机/关机/重启顺序才等待它,并用 `--min-restarts 1`。
 

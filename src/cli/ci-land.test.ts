@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { judgeRollup, resolveStack, runCiLand, isNetworkError, CI_LAND_EXIT, type PrInfo, type CiLandDeps } from './ci-land'
+import { judgeRollup, judgeQueue, hasMergeQueueRule, resolveStack, runCiLand, isNetworkError, CI_LAND_EXIT, type PrInfo, type CiLandDeps } from './ci-land'
 import type { ExecResult } from './ci-triage-run'
 
 const pr = (number: number, base: string, head: string, sha: string, isDraft = true): PrInfo =>
@@ -91,6 +91,9 @@ function fakeDeps(script: {
   forcePushBefores?: string[]
   /** gh pr merge 报网络错、但其实已经合了的 PR。 */
   mergedDespiteError?: number[]
+  /** 合并队列:进队列后第几次查状态时合进去;'dequeue' ⇒ 被踢出来;'move' ⇒ head 被人推了。 */
+  queue?: { mergeAfterPolls?: number; outcome?: 'merge' | 'dequeue' | 'move' | 'merged-other-head' | 'auto-only'; noRule?: boolean; preEnqueued?: number[]
+    /** 这个 head 上 ci · gate 的结论;otherRed = 另一条非必过检查红了。 */ gate?: string; otherRed?: boolean; noMergeCommitPolls?: number }
 }) {
   const calls: string[] = []
   let viewIdx = 0
@@ -99,6 +102,8 @@ function fakeDeps(script: {
   let t = 0
   let head = ''
   const mergedNow = new Set<number>()
+  const enqueued = new Map<number, { head: string; polls: number }>()
+  for (const n of script.queue?.preEnqueued ?? []) enqueued.set(n, { head: script.open.find(p => p.number === n)!.headRefOid, polls: 0 })
   const exec = (cmd: string, args: string[]): ExecResult => {
     const line = `${cmd} ${args.join(' ')}`
     calls.push(line)
@@ -112,7 +117,41 @@ function fakeDeps(script: {
       if (args[2] === 'origin/dev') return r('', (script.onTarget ?? []).includes(head) ? 0 : 1)
       return r('', (script.ancestors ?? []).includes(args[2]!) ? 0 : 1)
     }
+    if (line.startsWith('gh api graphql') && line.includes('isInMergeQueue')) {
+      const n = Number(args.find(a => a.startsWith('n='))!.slice(2))
+      const e = enqueued.get(n)
+      const q = script.queue ?? {}
+      const openHead = script.open.find(p => p.number === n)?.headRefOid ?? ''
+      let state = 'OPEN', headRefOid = e?.head ?? openHead, inQueue = !!e, auto = false, mergeCommit: { oid: string } | null = null
+      if (e && q.outcome === 'auto-only') { inQueue = false; auto = true }
+      if (e) {
+        e.polls++
+        if (e.polls >= (q.mergeAfterPolls ?? 2)) {
+          const outcome = q.outcome ?? 'merge'
+          if (outcome === 'merge') { land(n); state = 'MERGED'; mergeCommit = { oid: dev } }
+          else if (outcome === 'merged-other-head') { land(n); state = 'MERGED'; headRefOid = 'other-head'; mergeCommit = { oid: dev } }
+          else if (outcome === 'dequeue') inQueue = false
+          else if (outcome === 'move') headRefOid = 'someone-else'
+        }
+      }
+      if (mergeCommit && (q.noMergeCommitPolls ?? 0) > 0) { q.noMergeCommitPolls!--; mergeCommit = null }
+      const contexts = [
+        // 一条更早的、结论相反的 gate(rerun 之前那一次),排在后面:必须按开始时间认,不能认最后一条。
+        ...(q.gate ? [{ name: 'ci · gate', status: 'COMPLETED', conclusion: q.gate, startedAt: '2026-11-28T02:00:00Z' },
+          { name: 'ci · gate', status: 'COMPLETED', conclusion: q.gate === 'SUCCESS' ? 'FAILURE' : 'SUCCESS', startedAt: '2026-11-28T01:00:00Z' }] : []),
+        ...(q.otherRed ? [{ name: 'some other check', status: 'COMPLETED', conclusion: 'FAILURE' }] : []),
+      ]
+      return r(JSON.stringify({ data: { repository: { pullRequest: { state, headRefOid, baseRefName: 'dev', isInMergeQueue: inQueue, autoMergeRequest: auto ? { enabledAt: 'x' } : null, mergeCommit,
+        commits: { nodes: [{ commit: { oid: headRefOid, statusCheckRollup: { contexts: { nodes: contexts } } } }] } } } } }))
+    }
+    if (line.startsWith('gh api repos/{owner}/{repo}/rules/branches/')) {
+      return r(JSON.stringify(script.queue?.noRule ? [{ type: 'pull_request' }] : [{ type: 'merge_queue' }, { type: 'required_status_checks' }]))
+    }
     if (line.startsWith('gh api graphql')) return r(JSON.stringify(script.forcePushBefores ?? []))
+    if (line.startsWith('gh pr merge') && args.includes('--auto')) {
+      enqueued.set(Number(args[2]), { head: args[args.indexOf('--match-head-commit') + 1]!, polls: 0 })
+      return r()
+    }
     if (line.startsWith('git push') && script.netFailures?.push?.length) return r('', 128, script.netFailures.push.shift()!)
     if (line.startsWith('gh pr view') && args.includes('state')) {
       const n = Number(args[2])
@@ -157,6 +196,137 @@ function fakeDeps(script: {
 }
 
 const green = (sha: string) => ({ headRefOid: sha, statusCheckRollup: [ok('build · ubuntu-latest'), ok('build · macos-latest'), ok('build · windows-latest'), ok('d'), ok('e'), skip('f')] })
+
+describe('judgeQueue', () => {
+  const q = { state: 'OPEN', headRefOid: 'h', isInMergeQueue: true, autoMerge: false }
+  it('合了 / 在队列里 / 开着自动合并都分得清', () => {
+    expect(judgeQueue({ ...q, state: 'MERGED' }, 'h', 0)).toBe('merged')
+    expect(judgeQueue(q, 'h', 10 * 60_000)).toBe('waiting')
+  })
+  it('离开队列又没合:最后一次看见它在队列里之后的几分钟里先等(GitHub 慢半拍),过了就是被踢出来', () => {
+    const out = { ...q, isInMergeQueue: false }
+    expect(judgeQueue(out, 'h', 60_000)).toBe('waiting')
+    expect(judgeQueue(out, 'h', 4 * 60_000)).toBe('dequeued')
+    expect(judgeQueue({ ...q, state: 'CLOSED' }, 'h', 0)).toBe('dequeued')
+  })
+  it('只开着自动合并、还没进队列 ⇒ 在等 PR 自己的检查', () => {
+    expect(judgeQueue({ ...q, isInMergeQueue: false, autoMerge: true }, 'h', 10 * 60_000)).toBe('awaiting_checks')
+  })
+  it('head 被人推了 ⇒ moved(没看过的版本不合);合进去的不是钉住的那一版也是 moved,不报成功', () => {
+    expect(judgeQueue({ ...q, headRefOid: 'x' }, 'h', 0)).toBe('moved')
+    expect(judgeQueue({ ...q, state: 'MERGED', headRefOid: 'x' }, 'h', 0)).toBe('moved')
+  })
+  it('认规则集里的 merge_queue', () => {
+    expect(hasMergeQueueRule('[{"type":"merge_queue"}]')).toBe(true)
+    expect(hasMergeQueueRule('[{"type":"pull_request"}]')).toBe(false)
+    expect(hasMergeQueueRule('not json')).toBe(false)
+  })
+})
+
+const linuxOnly = (sha: string) => ({ headRefOid: sha, statusCheckRollup: [ok('changes · paths'), ok('build · ubuntu-latest'), ok('node · core suite'), ok('e2e'), ok('ci · gate'), skip('desktop-e2e')] })
+
+describe('runCiLand —— 合并队列', () => {
+  const one = [pr(7, 'dev', 'x', 'sx', false)]
+  it('落后 dev、PR 上只有 Linux 也照样进队列:--auto、不带 --squash,合了才算', async () => {
+    const { deps, calls } = fakeDeps({ open: one, views: [linuxOnly('sx')], behind: true, moveWhileWaiting: true })
+    const res = await runCiLand(deps, { top: 7, skipTypecheck: true, queue: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
+    expect(res.merged).toEqual([7])
+    expect(calls.filter(c => c.startsWith('gh pr merge'))).toEqual(['gh pr merge 7 --auto --match-head-commit sx'])
+    expect(res.message).toContain('经合并队列')
+    expect(res.message).toMatch(/ci triage --wait --rerun --sha \S+/)
+  })
+  it('队列那一轮红了被踢出来 ⇒ red,说去看 merge_group', async () => {
+    const { deps } = fakeDeps({ open: one, views: [linuxOnly('sx')], queue: { outcome: 'dequeue', mergeAfterPolls: 1 } })
+    const res = await runCiLand(deps, { top: 7, skipTypecheck: true, queue: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.red)
+    expect(res.message).toContain('merge_group')
+    expect(res.merged).toEqual([])
+  })
+  it('在队列里时 head 被人推了 ⇒ moved', async () => {
+    const { deps } = fakeDeps({ open: one, views: [linuxOnly('sx')], queue: { outcome: 'move', mergeAfterPolls: 1 } })
+    const res = await runCiLand(deps, { top: 7, skipTypecheck: true, queue: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.moved)
+  })
+  it('PR 自己的 CI 红了照旧不进队列', async () => {
+    const red = linuxOnly('sx'); red.statusCheckRollup[1] = { name: 'build · ubuntu-latest', status: 'COMPLETED', conclusion: 'FAILURE' }
+    const { deps, calls } = fakeDeps({ open: one, views: [red] })
+    const res = await runCiLand(deps, { top: 7, skipTypecheck: true, queue: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.red)
+    expect(calls.some(c => c.startsWith('gh pr merge'))).toBe(false)
+  })
+  it('叠起来的两层:下层进队列合了,上层 rebase 到 dev、先推后改 base(推失败时 base 没动,能接上),关了再开让 CI 对着 dev 跑,再用新 head 进队列', async () => {
+    const stack = [pr(1, 'dev', 'a', 'sa', false), pr(2, 'a', 'b', 'sb', false)]
+    const { deps, calls } = fakeDeps({ open: stack, views: [linuxOnly('sb')] })
+    const res = await runCiLand(deps, { top: 2, skipTypecheck: true, queue: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
+    expect(res.merged).toEqual([1, 2])
+    expect(calls.filter(c => /rebase --onto|push|pr edit|pr merge|pr close|pr reopen/.test(c))).toEqual([
+      'gh pr merge 1 --auto --match-head-commit sa',
+      'git rebase --onto origin/dev sa',
+      'git push --no-verify --force-with-lease=b:sb origin HEAD:refs/heads/b',
+      'gh pr edit 2 --base dev',
+      'gh pr close 2',
+      'gh pr reopen 2',
+      'gh pr merge 2 --auto --match-head-commit sb-rebased',
+    ])
+  })
+  it('dev 没开合并队列 ⇒ 不猜,停下来说用 --direct', async () => {
+    const { deps, calls } = fakeDeps({ open: one, views: [linuxOnly('sx')], queue: { noRule: true } })
+    const res = await runCiLand(deps, { top: 7, skipTypecheck: true, queue: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.precondition)
+    expect(res.message).toContain('--direct')
+    expect(calls.some(c => c.startsWith('gh pr merge'))).toBe(false)
+  })
+  it('已经在队列里(上一次回应丢了 / 等超时了)⇒ 不再请求一次,接着等', async () => {
+    const { deps, calls } = fakeDeps({ open: one, views: [linuxOnly('sx')], queue: { preEnqueued: [7] } })
+    const res = await runCiLand(deps, { top: 7, skipTypecheck: true, queue: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
+    expect(calls.some(c => c.startsWith('gh pr merge'))).toBe(false)
+  })
+  it('合进去的不是钉住的那一版 ⇒ moved,不报成功', async () => {
+    const { deps } = fakeDeps({ open: one, views: [linuxOnly('sx')], queue: { outcome: 'merged-other-head', mergeAfterPolls: 1 } })
+    const res = await runCiLand(deps, { top: 7, skipTypecheck: true, queue: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.moved)
+    expect(res.message).toContain('人看一眼')
+  })
+  it('开着自动合并在等 PR 自己的检查、ci · gate 红了 ⇒ 当场 red 并说自动合并还开着', async () => {
+    const { deps } = fakeDeps({ open: one, views: [linuxOnly('sx')], queue: { outcome: 'auto-only', mergeAfterPolls: 99, gate: 'FAILURE' } })
+    const res = await runCiLand(deps, { top: 7, skipTypecheck: true, queue: true, timeoutMin: 600 })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.red)
+    expect(res.message).toContain('ci · gate')
+    expect(res.message).toContain('自动合并还开着')
+  })
+  it('gate 跳过(只改文档)算过,不报红', async () => {
+    const { deps } = fakeDeps({ open: one, views: [linuxOnly('sx')], queue: { outcome: 'auto-only', mergeAfterPolls: 99, gate: 'SKIPPED' } })
+    const res = await runCiLand(deps, { top: 7, skipTypecheck: true, queue: true, timeoutMin: 30 })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.timeout)
+  })
+  it('别的非必过检查红了不算(不挡队列),照旧等', async () => {
+    const { deps } = fakeDeps({ open: one, views: [linuxOnly('sx')], queue: { outcome: 'auto-only', mergeAfterPolls: 99, gate: 'SUCCESS', otherRed: true } })
+    const res = await runCiLand(deps, { top: 7, skipTypecheck: true, queue: true, timeoutMin: 30 })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.timeout)
+    expect(res.message).toContain('开着自动合并')
+  })
+  it('合进去了但合入提交晚几秒才出现 ⇒ 再问几次拿到它', async () => {
+    const { deps } = fakeDeps({ open: one, views: [linuxOnly('sx')], queue: { noMergeCommitPolls: 2 } })
+    const res = await runCiLand(deps, { top: 7, skipTypecheck: true, queue: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
+    expect(res.mergeSha).toBe('d0+7')
+  })
+  it('合完返回这一层的合入提交(给自改部署用)', async () => {
+    const { deps } = fakeDeps({ open: one, views: [linuxOnly('sx')] })
+    const res = await runCiLand(deps, { top: 7, skipTypecheck: true, queue: true })
+    expect(res.mergeSha).toBe('d0+7')
+    expect(res.viaQueue).toBe(true)
+  })
+  it('不走队列(--direct)照旧要求三平台', async () => {
+    const { deps, calls } = fakeDeps({ open: one, views: [linuxOnly('sx')] })
+    const res = await runCiLand(deps, { top: 7, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.red)
+    expect(calls.some(c => c.startsWith('gh pr merge'))).toBe(false)
+  })
+})
 
 describe('runCiLand', () => {
   const open = [pr(1, 'dev', 'a', 'sa'), pr(2, 'a', 'b', 'sb'), pr(3, 'b', 'c', 'sc')]
