@@ -348,10 +348,8 @@ function isMacosDir(dir: string): boolean {
 // ── execute ──────────────────────────────────────────────────────────
 
 export interface SelfDeployDeps {
-  /** 暂存完成后、备份与换盘前复核构建来源。 */
+  /** 暂存完成后、备份与换盘前复核部署条件。 */
   confirmTarget?: (plan: SelfDeployPlan, previousVersion: string) => string | null | Promise<string | null>
-  /** 整包重签后，紧接着重启之前检查。拒绝时换回旧 sidecar 并重新封包。 */
-  beforeRestart?: (plan: SelfDeployPlan) => Promise<string | null>
   /** 外层还要跑自检，成功换盘后由外层结束事务。 */
   retainTransaction?: boolean
   transactionSha?: string
@@ -532,6 +530,7 @@ async function executeLocked(
   const currentProbe = deps.spawnSync(plan.sidecarPath, ['--version'], { timeoutMs: 5000, windowsHide: true })
   const currentOk = currentProbe.status === 0
   const previousVersion = currentOk ? (currentProbe.stdout || currentProbe.stderr).trim() : ''
+  // 原生库先暂存，通过最终复核后再安装。从 .prev 回滚时不动。
   const companions = !deployingFromBackup && plan.companions?.length ? stageCompanions(plan, deps) : null
   let changed: string | null | undefined
   try { changed = await deps.confirmTarget?.(plan, previousVersion) }
@@ -542,8 +541,6 @@ async function executeLocked(
     return { ok: false, exitCode: 1, blocked: 'target', steps: [...steps, { name: 'target', ok: false, detail: changed }] }
   }
 
-  // 2c. native — sidecar 旁边的原生库(onnxruntime)。只加不减、老 sidecar 不认它们,所以不进回滚;
-  // 装不上也不拦部署(知识库向量化会自己退回 Python),只记一笔。从 .prev 回滚时不动。
   if (deployingFromBackup) {
     steps.push({ name: 'backup', ok: true, detail: 'skipped: deploying from the backup itself' })
   } else if (!currentOk) {
@@ -569,6 +566,7 @@ async function executeLocked(
     return { ok: false, exitCode: 1, steps: [...steps, { name: 'transaction', ok: false, detail: errMsg(err) }], version }
   }
 
+  // 原生库只加不减，不进回滚。安装失败只记一笔，知识库向量化会退回 Python。
   if (companions) steps.push(companions.install())
 
   // 4. swap — rename the already-staged copy over the sidecar. See the file
@@ -584,9 +582,8 @@ async function executeLocked(
   }
 
   // 4b. seal — re-sign the whole .app now that the new sidecar sits inside
-  // it. A failed seal happens BEFORE any kickstart: the old daemon is still
-  // running, untouched. So this is not a rollback but an aborted deploy —
-  // put the `.prev` bytes back (same copy+rename), re-seal, never restart.
+  // it. If sealing fails, restore the `.prev` bytes and re-seal without
+  // issuing a kickstart.
   // `plan.rollback` doesn't apply here (it governs the health gate, i.e.
   // after a restart); honouring it would leave an unvalidated sidecar on
   // disk for the next respawn to pick up.
@@ -594,7 +591,16 @@ async function executeLocked(
     const seal = sealApp(plan.signing, deps)
     steps.push(seal)
     if (!seal.ok) {
-      const restored = restoreBeforeRestart(plan, deps, steps)
+      let restored = false
+      try {
+        swapBinary(deps, plan.prevPath, plan.tmpPath, plan.sidecarPath)
+        steps.push({ name: 'restore_swap', ok: true })
+        restored = true
+      } catch (err) {
+        deps.fs.unlink(plan.tmpPath)
+        steps.push({ name: 'restore_swap', ok: false, detail: errMsg(err) })
+      }
+      steps.push({ ...sealApp(plan.signing, deps), name: 'restore_seal' })
       return { ok: false, exitCode: 1, steps, version, rolledBack: restored }
     }
   }
@@ -602,19 +608,6 @@ async function executeLocked(
   // 4c. plugins source — before the restart so the new daemon boots with it.
   // Never fatal: the plugins gate after health is what judges the outcome.
   if (plan.pluginsSource) steps.push(ensurePluginsSource(plan.pluginsSource))
-
-  if (deps.beforeRestart) {
-    let reason: string | null
-    try { reason = await deps.beforeRestart(plan) }
-    catch (err) { reason = `无法复核重启条件：${errMsg(err)}` }
-    if (reason) {
-      steps.push({ name: 'restart_ready', ok: false, detail: reason })
-      const restored = restoreBeforeRestart(plan, deps, steps)
-      // 还原失败需要进故障计数和通知，并保留事务记录。
-      const safe = restored && steps.filter(s => s.name.startsWith('restore_')).every(s => s.ok)
-      return { ok: false, exitCode: 1, ...(safe ? { blocked: 'target' as const } : {}), steps, version, rolledBack: restored }
-    }
-  }
 
   // 5 + 6. restart + health gate. Everything past this point runs with the
   // NEW binary already on disk, so every failure from here rolls back
@@ -673,21 +666,6 @@ async function executeLocked(
     rolledBack: rollbackOutcome.rolledBack,
     diagnostics,
   }
-}
-
-/** 重启门拒绝或整包签名失败时，旧 daemon 仍在运行。恢复磁盘内容即可。 */
-function restoreBeforeRestart(plan: SelfDeployPlan, deps: SelfDeployDeps, steps: SelfDeployStep[]): boolean {
-  let restored = false
-  try {
-    swapBinary(deps, plan.prevPath, plan.tmpPath, plan.sidecarPath)
-    steps.push({ name: 'restore_swap', ok: true })
-    restored = true
-  } catch (err) {
-    deps.fs.unlink(plan.tmpPath)
-    steps.push({ name: 'restore_swap', ok: false, detail: errMsg(err) })
-  }
-  if (plan.signing) steps.push({ ...sealApp(plan.signing, deps), name: 'restore_seal' })
-  return restored
 }
 
 // chmod BEFORE rename, deliberately: rename() is the only step that makes

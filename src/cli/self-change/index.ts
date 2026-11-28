@@ -94,7 +94,7 @@ export function selfDeployPlanFor(input: SelfDeployPlanInput): SelfDeployPlan {
  * 用 repoRoot 里构建好的 sidecar 部署(或回滚到 .prev)。自改的 deploy 步和 `self ship` 共用这一份。
  * entitlements.plist 从 repoRoot 拿(自改时就是这条运行自己的工作树);签名身份从本机钥匙串探。
  */
-type DeployHooks = Pick<SelfDeployDeps, 'confirmTarget' | 'beforeRestart' | 'transactionSha'>
+type DeployHooks = Pick<SelfDeployDeps, 'confirmTarget' | 'transactionSha'>
 
 export function makeRepoDeployment(stateDir: string, repoRoot: string, taskOptions: DeployTaskOptions, lock?: DeploymentLock, hooks: DeployHooks = {}) {
   let plan: SelfDeployPlan | undefined

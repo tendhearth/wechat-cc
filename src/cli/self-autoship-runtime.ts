@@ -280,11 +280,6 @@ export function defaultAutoshipDeps(stateDir: string, sourceRoot: string | null,
                   return '工作树在构建期间发生变化。'
                 }
                 if (previousVersion !== previous.version) return '已安装版本发生变化。'
-                const config = settings()
-                if (config.auto_ship !== true) return '自动部署已关闭。'
-                return autoshipWindowStatus(config, Date.now())
-              },
-              async beforeRestart(plan) {
                 const tasks = await defaultDeployTaskGate(stateDir, { nonInteractive: true })
                 if (tasks) return tasks
                 if ((loadavg()[0] ?? 0) / Math.max(1, cpus().length) > DEFAULT_MAX_LOAD_PER_CPU) return '机器负载过高。'
@@ -292,7 +287,7 @@ export function defaultAutoshipDeps(stateDir: string, sourceRoot: string | null,
                 if ('reason' in target) return target.reason
                 if (!target.ready.idle) return 'daemon 正在处理会话、后台工作或关机。'
                 if (!target.ready.guarded) return '网络守护未放行。'
-                // 就绪返回后只做本地配置检查，随后立即交给 kickstart。
+                // 就绪返回后只重读开关和时间窗，随后交给备份与换盘。
                 const config = settings()
                 if (config.auto_ship !== true) return '自动部署已关闭。'
                 return autoshipWindowStatus(config, Date.now())

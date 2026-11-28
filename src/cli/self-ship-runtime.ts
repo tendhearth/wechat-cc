@@ -23,7 +23,7 @@ export async function shipFromRepo(input: {
   shipOptions?: ShipOpts
   checkedSha?: string
   lock?: DeploymentLock
-  hooks?: Pick<SelfDeployDeps, 'beforeRestart' | 'confirmTarget' | 'transactionSha'>
+  hooks?: Pick<SelfDeployDeps, 'confirmTarget' | 'transactionSha'>
 }) {
   const { stateDir, repoRoot, taskOptions, checkedSha } = input
   const daemon = makeDaemonClient({ readApiInfo: () => readApiInfo(stateDir), fetch })

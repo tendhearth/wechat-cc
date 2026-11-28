@@ -1235,20 +1235,28 @@ it('blocks forward deploys across state directories and only allows rescue with 
   } finally { held.release() }
 })
 
-it.each([null, 'daemon 忙'])('queries readiness after backup, swap and seal, before the first kickstart (%s)', async reason => {
+it.each([null, 'daemon 忙'])('queries final readiness after staging and before backup or swap (%s)', async reason => {
   const h = harness()
   h.enableSigning()
+  writeFileSync(h.plan.prevPath, 'EARLIER_BINARY')
+  const nativeSource = join(h.dir, 'built-runtime.dylib')
+  const nativeTarget = join(dirname(h.plan.sidecarPath), 'runtime.dylib')
+  writeFileSync(nativeSource, 'NEW_NATIVE_CONTENT')
+  writeFileSync(nativeTarget, 'OLD_NATIVE_CONTENT')
+  h.plan.companions = [{ from: nativeSource, to: nativeTarget }]
+  const installedPaths = [h.plan.sidecarPath, h.plan.prevPath, nativeTarget]
+  const installed = () => installedPaths.map(path => ({ bytes: readFileSync(path), inode: statSync(path).ino }))
+  const before = installed()
   const held = acquireDeploymentLock(h.dir)
   if ('busy' in held) throw new Error('fixture unexpectedly busy')
   h.plan.lockPath = join(h.dir, '.wechat-cc-self-deploy.lock.sqlite')
   const journal = deploymentTransactions(h.plan.lockPath, dirname(h.plan.infoPath))
   let queried = false
-  h.deps.beforeRestart = async plan => {
+  h.deps.confirmTarget = async plan => {
     queried = true
-    expect(journal.pending()).not.toBeNull()
-    expect(readFileSync(plan.prevPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
-    expect(readFileSync(plan.sidecarPath, 'utf8')).toBe('NEW_BINARY_CONTENT')
-    expect(h.codesignCalls.at(-1)?.args.at(-1)).toBe(plan.signing?.appPath)
+    expect(journal.pending()).toBeNull()
+    expect(installed()).toEqual(before)
+    expect(h.codesignCalls.map(call => call.args.at(-1))).toEqual([plan.tmpPath, `${nativeTarget}.new`])
     expect(h.kickstartCalls).toBe(0)
     return reason
   }
@@ -1256,13 +1264,21 @@ it.each([null, 'daemon 忙'])('queries readiness after backup, swap and seal, be
     const result = await executeSelfDeploy(h.plan, h.deps, held)
     expect(queried).toBe(true)
     if (reason) {
-      expect(result).toMatchObject({ ok: false, blocked: 'target', rolledBack: true })
+      expect(result).toMatchObject({ ok: false, blocked: 'target' })
+      expect(result.steps.at(-1)).toEqual({ name: 'target', ok: false, detail: reason })
+      expect(result.steps.map(step => step.name)).toEqual(['preflight', 'stage', 'sign', 'target'])
       expect(h.kickstartCalls).toBe(0)
-      expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
-      expect(h.codesignCalls.at(-1)?.sidecarContentAtCall).toBe('OLD_BINARY_CONTENT')
+      expect(installed()).toEqual(before)
+      expect(existsSync(h.plan.tmpPath)).toBe(false)
+      expect(existsSync(`${nativeTarget}.new`)).toBe(false)
+      expect(h.codesignCalls).toHaveLength(2)
     } else {
       expect(result.ok).toBe(true)
       expect(h.kickstartCalls).toBe(1)
+      expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('NEW_BINARY_CONTENT')
+      expect(readFileSync(h.plan.prevPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+      expect(readFileSync(nativeTarget, 'utf8')).toBe('NEW_NATIVE_CONTENT')
+      expect(h.codesignCalls.at(-1)?.args.at(-1)).toBe(h.plan.signing?.appPath)
     }
     expect(journal.pending()).toBeNull()
   } finally { held.release() }
