@@ -7,7 +7,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { jobLifecycle } from './macmini-job-lifecycle.mjs'
 import { acquireMachineLock, machineGateOptions } from './macmini-machine-lock.mjs'
-import { browserHarness, isInsideLab, miniConfiguration } from './macmini-ui-protocol.mjs'
+import { assertPushedSource, browserHarness, isInsideLab, miniConfiguration, snapshotRefName } from './macmini-ui-protocol.mjs'
 import { PUBLIC_CACHE_COMMIT, sha256, gitObject, verifySourceManifest, sourcePath, removeInactiveSnapshot } from './macmini-source-manifest.mjs'
 import { pruneInactiveSnapshots } from './macmini-snapshot-retention.mjs'
 const finished = child => new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',code=>code===0?resolve():reject(Error(`Snapshot process exited ${code}`)))})
@@ -105,7 +105,7 @@ export function verifiedSourcePayload({repo,sha,phase='after'}) {
  const header=Buffer.from(JSON.stringify(meta)),length=Buffer.alloc(4);length.writeUInt32BE(header.length)
  return Buffer.concat([length,header,delta])
 }
-export const supportsBrowserSnapshot = branch => ['claude/butler-desktop','butler-desktop','one-click-cli-setup','mini-ui-acceptance','phone-connect-relay','cc-alive-2','design-unify-b1','design-unify-b1-fixes','codex-hook-trust-ux','topics-are-projects','topics-waiting-honest','design-b3','mobile-budget','who-answers-web-avatar','who-answers-desktop-avatar','claude/butler-web'].includes(branch)
+export const supportsBrowserSnapshot = branch => snapshotRefName(branch)
 
 export async function main() {
  if(process.argv[2]==='--receive') {
@@ -115,10 +115,11 @@ export async function main() {
  } else {
  const phase=process.argv[2]??'after';if(!['before','after'].includes(phase))throw Error('Use before or after')
  const repo=fileURLToPath(new URL('../../..',import.meta.url)),git=(...args)=>execFileSync('/usr/bin/git',['-C',repo,...args],{maxBuffer:128*1024*1024})
- if(!supportsBrowserSnapshot(git('branch','--show-current').toString().trim()))throw Error('This task transport requires an explicitly authorized UI branch')
+ if(!supportsBrowserSnapshot(git('branch','--show-current').toString().trim()))throw Error('Check out a named branch before sending a browser snapshot')
  // The assigned acceptance baseline is the parent of the ledger PR (#915).
  const baseline=git('branch','--show-current').toString().trim()==='mini-ui-acceptance'?['rev-parse','9547a8c30^']:['merge-base','HEAD','origin/dev']
  const sha=git(...(phase==='before'?baseline:['rev-parse','HEAD'])).toString().trim()
+ assertPushedSource(git,sha)
  const payload=verifiedSourcePayload({repo,sha,phase})
  const { executorInvocation, sendSnapshot } = await import('./macmini-lab-client.mjs')
  const env = process.env

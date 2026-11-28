@@ -59,7 +59,10 @@ for(const target of ['browser','app'])for(const stage of ['lock-wait','stdin'])t
  expect(events).toContain('release');expect(events).toContain('exit:143')
 })
 
-test('ledger branch does not authorize browser or verified app snapshots',async()=>{
+test('browser snapshots take any plain branch name; the pushed check guards the source',async()=>{
  const {supportsBrowserSnapshot}=await import('./macmini-browser-snapshot.mjs')
- expect(supportsBrowserSnapshot('matter-ledger-step1')).toBe(false)
+ expect(supportsBrowserSnapshot('matter-ledger-step1')).toBe(true)
+ expect(supportsBrowserSnapshot('')).toBe(false)
+ const source=await import('node:fs/promises').then(fs=>fs.readFile(new URL('./macmini-browser-snapshot.mjs',import.meta.url),'utf8'))
+ expect(source).toContain('assertPushedSource(git,sha)')
 })

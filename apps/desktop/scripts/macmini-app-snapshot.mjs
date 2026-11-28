@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { jobLifecycle } from './macmini-job-lifecycle.mjs'
 import { acquireMachineLock as defaultAcquireMachineLock, machineGateOptions } from './macmini-machine-lock.mjs'
 import {removeInactiveSnapshot} from './macmini-source-manifest.mjs'
-import { isInsideLab, miniConfiguration } from './macmini-ui-protocol.mjs'
+import { assertPushedSource, isInsideLab, miniConfiguration, snapshotRefName } from './macmini-ui-protocol.mjs'
 import { receiveBrowserSnapshot, verifiedSourcePayload } from './macmini-browser-snapshot.mjs'
 import { pruneInactiveSnapshots } from './macmini-snapshot-retention.mjs'
 
@@ -57,7 +57,9 @@ export async function receiveAppSnapshot({mini,sha,lifecycle=jobLifecycle(),inpu
   }
 }
 
-export const supportsAppSnapshot = ref => ['claude/butler-app', 'mini-ui-acceptance', 'cc-alive-2', 'origin/dev', 'app-maestro-build3', 'design-unify-b1-fixes', 'codex-hook-trust-ux', 'topics-are-projects', 'topics-waiting-honest', 'design-b3', 'who-answers-app-avatar'].includes(ref)
+export const supportsAppSnapshot = ref => snapshotRefName(ref)
+// These refs predate the verified transport and keep the full git archive.
+const FULL_ARCHIVE_REFS = new Set(['origin/dev', 'claude/butler-app', 'app-maestro-build3', 'design-unify-b1-fixes', 'topics-are-projects', 'who-answers-app-avatar'])
 
 export async function main() {
  if (process.argv[2] === '--receive' || process.argv[2] === '--receive-verified') {
@@ -68,10 +70,12 @@ export async function main() {
   else await receiveAppSnapshot({mini,sha})
  } else {
   const ref = process.argv[2] ?? 'origin/dev'
-  if (!supportsAppSnapshot(ref)) throw Error('Snapshot ref must be an explicitly authorized UI branch')
+  if (!supportsAppSnapshot(ref)) throw Error('Snapshot ref must be a plain branch or ref name')
   const repo = fileURLToPath(new URL('../../..', import.meta.url))
   const sha = execFileSync('/usr/bin/git', ['-C', repo, 'rev-parse', '--verify', `${ref}^{commit}`], { encoding: 'utf8' }).trim()
-  const verified=ref==='mini-ui-acceptance'||ref==='cc-alive-2'||ref==='design-b3'||ref==='codex-hook-trust-ux'||ref==='topics-waiting-honest'
+  assertPushedSource((...args) => execFileSync('/usr/bin/git', ['-C', repo, ...args], { maxBuffer: 16 * 1024 * 1024 }), sha)
+  // A full archive of today's tree truncated twice (11-18); new refs take the verified delta.
+  const verified = !FULL_ARCHIVE_REFS.has(ref)
   const { executorInvocation, sendSnapshot } = await import('./macmini-lab-client.mjs')
   const env = process.env
   const transport = executorInvocation('app-status', process.argv[3] ?? 'home', undefined, env,

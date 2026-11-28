@@ -133,3 +133,15 @@ export function isInsideLab(labRoot, candidate, paths = path) {
   return relative !== '' && relative !== '..' &&
     !relative.startsWith('..' + paths.sep) && !paths.isAbsolute(relative)
 }
+
+// Which source may be snapshotted to the mini. It used to be a hand-kept list of
+// branch names that every acceptance run had to edit. What the list stood for —
+// "only code others can see" — is now checked directly: the ref is a plain name
+// and the commit is already on a pushed origin/* branch.
+const SNAPSHOT_REF = /^(?![-/.])(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9._/-]{1,120}$/
+export const snapshotRefName = ref => typeof ref === 'string' && SNAPSHOT_REF.test(ref) && !ref.endsWith('.lock')
+export function assertPushedSource(git, sha) {
+  const remote = git('branch', '-r', '--contains', sha).toString().split('\n').map(line => line.trim()).filter(line => line.startsWith('origin/'))
+  if (!remote.length) throw Error(`Commit ${sha.slice(0, 9)} is not on any pushed origin/* branch; push it (and git fetch) before sending it to the mini`)
+  return remote
+}
