@@ -1,4 +1,5 @@
-import type { AutoshipConfig } from '../lib/autoship-config'
+import { autoshipWindowStatus, type AutoshipConfig } from '../lib/autoship-config'
+import { DeploymentLedgerError } from './deployment-failures'
 import { SHIP_EXIT, type ShipResult } from './self-ship'
 
 export const AUTOSHIP_EXIT = { ok: 0, failed: 1, skipped: 2, blocked: 3 } as const
@@ -71,7 +72,8 @@ interface AutoshipDeps {
   targetMismatch(): Promise<string | null>
   pendingTransaction(): string | null
   clearTransaction(): void
-  lock(): { ok: true; release(): void } | { ok: false; holder: number }
+  repairLedger(): string | null
+  lock(management: boolean): { ok: true; release(): void } | { ok: false; reason: string }
   repo(url: string): AutoshipRepo
   installed(): InstalledVersion | null
   loadState(): AutoshipState
@@ -125,8 +127,9 @@ export async function runAutoshipCommand(deps: AutoshipDeps, flags: Flags = {}):
       return ok([
         `自动部署${settings?.auto_ship === true ? '已开启' : '未开启'}。`,
         `停机状态：${state.halted_at === null ? '未停机' : `${new Date(state.halted_at).toISOString()} · ${state.halt_reason}`}（连续故障 ${state.fail_streak} 次）。`,
-        state.pause_reason ? `准备暂停：${state.pause_reason}` : '',
+        state.pause_reason ? `暂停：${state.pause_reason}` : '',
         pending ?? '',
+        autoshipWindowStatus(settings, deps.now()) ?? '',
         last ? `上次结论：${last.at} · dev ${last.sha ?? '未知'} · 退出 ${last.exitCode} · ${last.message}` : '还没有完成的轮次。',
         skipped && (!last || skipped.at >= last.at) ? `当前跳过：${skipped.at} · dev ${skipped.sha ?? '未知'} · ${skipped.message}` : '',
       ].filter(Boolean).join('\n'))
@@ -158,17 +161,24 @@ export async function runAutoshipCommand(deps: AutoshipDeps, flags: Flags = {}):
     }
     if (!flags.unhalt && decideAutoship(decision) === 'disabled') return skip('自动部署未开启。')
 
-    const lock = deps.lock()
+    const lock = deps.lock(flags.unhalt === true)
     decision.locked = lock.ok
-    if (!lock.ok) return skip(`自改或部署正在持锁（PID ${lock.holder}），本轮跳过。`)
+    if (!lock.ok) return skip(lock.reason)
     release = lock.release
     const state = deps.loadState()
     const pending = deps.pendingTransaction()
     if (flags.unhalt) {
       if (pending) deps.clearTransaction()
+      let backup: string | null
+      try { backup = deps.repairLedger() }
+      catch (err) {
+        if (!(err instanceof DeploymentLedgerError)) throw err
+        deps.saveState({ ...state, pause_reason: err.message })
+        return fail(`${pending ? '已确认清除部署事务。' : ''}自动部署仍暂停。${err.message}`)
+      }
       const { pause_reason: _pause, ...rest } = state
       deps.saveState({ ...rest, halted_at: null, halt_reason: null, fail_streak: 0 })
-      return ok('已解除自动部署停机与准备暂停。失败记录仍保留。')
+      return ok(`已解除自动部署停机与暂停。${backup ? `损坏的失败账已备份到 ${backup} 并重建。` : '失败记录仍保留。'}`)
     }
     if (pending) {
       if (state.halt_reason === pending) return skip(pending)
@@ -178,7 +188,10 @@ export async function runAutoshipCommand(deps: AutoshipDeps, flags: Flags = {}):
     }
     decision.halted = state.halted_at !== null
     if (decideAutoship(decision) === 'halted') return skip('自动部署已停机。运行 self autoship --unhalt 解除。')
-    if (state.pause_reason) return skip(`自动部署准备暂停：${state.pause_reason} 修复后运行 self autoship --unhalt。`)
+    if (state.pause_reason) return skip(`自动部署暂停：${state.pause_reason} 修复后运行 self autoship --unhalt。`)
+
+    const window = autoshipWindowStatus(settings, deps.now())
+    if (window) return skip(window)
 
     const mismatch = await deps.targetMismatch()
     if (mismatch) return skip(mismatch)
@@ -230,18 +243,19 @@ export async function runAutoshipCommand(deps: AutoshipDeps, flags: Flags = {}):
       deps.saveState({
         ...state,
         failedShas: [...state.failedShas, sha],
+        ...(result.ledgerError ? { pause_reason: result.ledgerError } : {}),
         fail_streak,
         halted_at: halt ? deps.now() : null,
         halt_reason: halt ? `${sha} ${stage}失败，连续两次` : null,
       })
       const current = deps.installed()?.version
       const version = current ? `当前 sidecar ${current}。` : '当前 sidecar 版本无法确认。'
-      await notify(deps, `自动部署 ${sha} 在${stage}阶段失败。${version}${halt ? '连续两次失败，自动部署已停机。' : ''}\n${result.message.slice(0, 1000)}`)
+      await notify(deps, `自动部署 ${sha} 在${stage}阶段失败。${version}${halt ? '连续两次失败，自动部署已停机。' : ''}\n${result.message.slice(0, 1000)}${result.ledgerError ? `\n自动部署已暂停。${result.ledgerError}。修复后运行 self autoship --unhalt。` : ''}`)
       return fail(`${result.message}\n${version}`)
     } catch (err) {
-      if (!(err instanceof AutoshipPreparationError)) throw err
+      if (!(err instanceof AutoshipPreparationError || err instanceof DeploymentLedgerError)) throw err
       deps.saveState({ ...state, pause_reason: err.message })
-      await notify(deps, `自动部署准备暂停：${err.message} 修复后运行 self autoship --unhalt。`)
+      await notify(deps, `自动部署暂停：${err.message} 修复后运行 self autoship --unhalt。`)
       return fail(err.message)
     }
   }

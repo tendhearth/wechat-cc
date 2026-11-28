@@ -23,7 +23,8 @@ import { workbenchSubprocessEnv } from '../../adapters/executors/subprocess-env'
 import { readApiInfo } from '../../lib/api-info'
 import { deploymentFailures } from '../deployment-failures'
 import { defaultCiTriageDeps, runCiTriage } from '../ci-triage-run'
-import { acquireDeploymentLock, defaultSelfDeployDeps, executeSelfDeploy, planSelfDeploy, resolveSigningInputs, type DeploymentLock, type SelfDeployDeps, type DeveloperIdIdentity, type SelfDeployPlan, type SelfDeployResult } from '../self-deploy'
+import { defaultSelfDeployDeps, executeSelfDeploy, planSelfDeploy, resolveSigningInputs, type SelfDeployDeps, type DeveloperIdIdentity, type SelfDeployPlan, type SelfDeployResult } from '../self-deploy'
+import { acquireDeploymentLock, deploymentLockPath, deploymentTransactions, type DeploymentLock } from '../deployment-transaction'
 import { defaultSelftestDeps, runChatSelftest, runWorkbenchSelftest, type SelftestReport } from '../selftest'
 import type { SelfChangeConfig } from './config'
 import { makeDaemonClient } from './daemon-client'
@@ -93,7 +94,7 @@ export function selfDeployPlanFor(input: SelfDeployPlanInput): SelfDeployPlan {
  * 用 repoRoot 里构建好的 sidecar 部署(或回滚到 .prev)。自改的 deploy 步和 `self ship` 共用这一份。
  * entitlements.plist 从 repoRoot 拿(自改时就是这条运行自己的工作树);签名身份从本机钥匙串探。
  */
-type DeployHooks = Pick<SelfDeployDeps, 'confirmTarget' | 'beforeStage'>
+type DeployHooks = Pick<SelfDeployDeps, 'confirmTarget' | 'beforeRestart' | 'transactionSha'>
 
 export function makeRepoDeployment(stateDir: string, repoRoot: string, taskOptions: DeployTaskOptions, lock?: DeploymentLock, hooks: DeployHooks = {}) {
   let plan: SelfDeployPlan | undefined
@@ -120,7 +121,7 @@ export function makeRepoDeployment(stateDir: string, repoRoot: string, taskOptio
       // 复用已部署的目标，避免重读 plist 后从另一个包的 .prev 回滚。
       return executeSelfDeploy({ ...plan, newBinaryPath: plan.prevPath, rollback: false }, deps, lock)
     }
-    return executeSelfDeploy(plan, { ...deps, ...hooks }, lock)
+    return executeSelfDeploy(plan, { ...deps, ...hooks, retainTransaction: true }, lock)
   }
 }
 
@@ -175,6 +176,7 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
   const homeDir = homedir()
 
   const taskOptions={waitTasks:true,timeoutMs:DEPLOY_TASK_WAIT_MS,nonInteractive:true}
+  const transactions = deploymentTransactions(deploymentLockPath(homeDir), stateDir)
   let deployLock: DeploymentLock | undefined
   let deployment: ReturnType<typeof makeRepoDeployment> | undefined
   const runDeploy = async (repoRoot: string, mode: 'deploy' | 'rollback'):Promise<SelfDeployResult> => {
@@ -186,7 +188,9 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
     }
     if (opts.deployFromRepo) return opts.deployFromRepo(stateDir, repoRoot, mode, taskOptions)
     deployment ??= makeRepoDeployment(stateDir, repoRoot, taskOptions, deployLock)
-    return deployment(mode)
+    const result = await deployment(mode)
+    if (mode === 'rollback' && result.ok) transactions.finish()
+    return result
   }
 
   const runTree = runPath(config, opts.runId)
@@ -242,9 +246,11 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
     // ci land 那一套 deps,去掉它用不着的 flake 登记表。
     forge: ghForge((cwd) => { const { registry: _registry, ...deps } = defaultCiTriageDeps(cwd); return deps }),
 
+    pendingDeployment: () => transactions.pending()?.message ?? null,
+    finishDeployment: transactions.finish,
     lockDeployment: () => {
       const held = acquireDeploymentLock(homeDir)
-      if ('heldBy' in held) return held
+      if ('busy' in held) return held
       deployLock = held
       return { release() { held.release(); deployLock = undefined; deployment = undefined } }
     },

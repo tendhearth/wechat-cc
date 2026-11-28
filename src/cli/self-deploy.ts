@@ -27,11 +27,12 @@
  */
 import { markPlannedRestart } from '../lib/restart-markers'
 import { spawnSync as nodeSpawnSync } from 'node:child_process'
-import { chmodSync, closeSync, copyFileSync, existsSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { basename, dirname, resolve } from 'node:path'
 import { readApiInfo } from '../lib/api-info'
 import { dirHasPlugins, readPluginsSourcePointer, writePluginsSourcePointer } from '../lib/plugins-source'
 import { SIDECAR_NAMES } from '../lib/app-identity'
+import { acquireDeploymentLockAt, canonicalDeploymentPath, DEPLOYMENT_BUSY, deploymentLockPath, deploymentTransactions, sameDeploymentPath, type DeploymentLock } from './deployment-transaction'
 import { defaultDeployTaskGate, type DeployTaskOptions } from './deploy-task-gate'
 
 export interface LaunchAgentInfo {
@@ -114,7 +115,7 @@ export interface SelfDeployPlan {
   appPath?: string
   /** `--allow-unsigned`:包是 Developer ID 封的、这次却不签,也照样换(见 checkSigningRequired)。 */
   allowUnsigned?: boolean
-  /** 部署锁(状态目录里一份);两次部署同时跑会互相覆盖 `.new` / `.prev`。老计划没有 ⇒ 不加锁。 */
+  /** 同一用户的部署锁。手搓测试计划可以省略。 */
   lockPath?: string
 }
 
@@ -246,7 +247,7 @@ export function planSelfDeploy(input: PlanSelfDeployInput): SelfDeployPlan {
     allowMissingPlugins: input.allowMissingPlugins ?? false,
     appPath: posixDirname(posixDirname(macosDir)),
     allowUnsigned: input.allowUnsigned ?? false,
-    lockPath: deployLockPath(input.homeDir),
+    lockPath: deploymentLockPath(input.homeDir),
     companions: SIDECAR_COMPANIONS.map(name => ({
       from: posixJoin(posixDirname(posixDirname(newBinaryPath)), 'frameworks', `${name}-${archSuffix}-apple-darwin`),
       to: posixJoin(macosDir!, name),
@@ -347,10 +348,13 @@ function isMacosDir(dir: string): boolean {
 // ── execute ──────────────────────────────────────────────────────────
 
 export interface SelfDeployDeps {
-  /** 持锁，在写入部署暂存文件之前记录事务。 */
-  beforeStage?: (plan: SelfDeployPlan) => void
-  /** 暂存和签名完成后、备份与换盘前的最后一道门。 */
+  /** 暂存完成后、备份与换盘前复核构建来源。 */
   confirmTarget?: (plan: SelfDeployPlan, previousVersion: string) => string | null | Promise<string | null>
+  /** 整包重签后，紧接着重启之前检查。拒绝时换回旧 sidecar 并重新封包。 */
+  beforeRestart?: (plan: SelfDeployPlan) => Promise<string | null>
+  /** 外层还要跑自检，成功换盘后由外层结束事务。 */
+  retainTransaction?: boolean
+  transactionSha?: string
   /** 任何改文件之前检查交办；回滚到已知备份时不等待，保留修复能力。 */
   taskGate?: (stateDir: string) => Promise<string | null>
   spawnSync: (cmd: string, args: string[], opts?: { timeoutMs?: number; windowsHide?: boolean }) => { status: number | null; stdout: string; stderr: string }
@@ -370,8 +374,8 @@ export interface SelfDeployDeps {
   log: (line: string) => void
   /** kickstart 之前写 planned-restart 纸条(lib/restart-markers)。缺省 ⇒ 不写(测试)。 */
   markPlannedRestart?: (stateDir: string, reason: string) => void
-  /** 拿部署锁;拿不到(另一次部署在跑)⇒ 返回占着它的 pid。缺省 ⇒ 不加锁(测试)。 */
-  lock?: (path: string) => { release(): void } | { heldBy: number }
+  /** 拿部署锁；争用立即返回 busy。缺省供离线测试。 */
+  lock?: typeof acquireDeploymentLockAt
 }
 
 export interface SelfDeployStep {
@@ -381,7 +385,7 @@ export interface SelfDeployStep {
 }
 
 export interface SelfDeployResult {
-  blocked?: 'tasks' | 'target'
+  blocked?: 'tasks' | 'target' | 'transaction'
   ok: boolean
   exitCode: 0 | 1 | 3
   steps: SelfDeployStep[]
@@ -392,36 +396,45 @@ export interface SelfDeployResult {
 
 const HEALTH_POLL_INTERVAL_MS = 500
 
-export interface DeploymentLock {
-  holds(path: string): boolean
-  release(): void
-}
-
-// 所有计划都会重启同一个用户的 LaunchAgent，即使 --app 或状态目录不同。
-const deployLockPath = (homeDir: string) => posixJoin(homeDir, '.wechat-cc-self-deploy.lock')
-
-export function acquireDeploymentLock(homeDir: string): DeploymentLock | { heldBy: number } {
-  const path = deployLockPath(homeDir)
-  const lock = acquireDeployLock(path)
-  if ('heldBy' in lock) return lock
-  let held = true
-  return {
-    holds: requested => held && requested === path,
-    release: () => { if (held) { held = false; lock.release() } },
-  }
-}
-
 export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDeps, lock?: DeploymentLock): Promise<SelfDeployResult> {
-  // 两次部署同时跑(手动 + 自改流水线)会抢同一个 `.new`,后一次的备份还会把前一次刚换上、还没过健康门的
-  // 二进制拷成 `.prev` ⇒ 之后每次回滚都回到那个没验过的版本(2026-10-10 评审)。整次部署持锁。
-  const held = plan.lockPath && deps.lock && !lock?.holds(plan.lockPath) ? deps.lock(plan.lockPath) : null
-  if (held && 'heldBy' in held) {
-    return { ok: false, exitCode: 1, steps: [{ name: 'lock', ok: false, detail: `another self deploy is running (pid ${held.heldBy})` }] }
+  const path = plan.lockPath
+  const held = path && deps.lock && !lock?.holds(path) ? deps.lock(path) : null
+  if (held && 'busy' in held) {
+    return { ok: false, exitCode: 1, steps: [{ name: 'lock', ok: false, detail: DEPLOYMENT_BUSY }] }
   }
-  try { return await executeLocked(plan, deps) } finally { held?.release() }
+  try {
+    const journal = path && (held || lock?.holds(path)) ? deploymentTransactions(path, dirname(plan.infoPath)) : null
+    const pending = journal?.pending()
+    const backup = samePath(plan.newBinaryPath, plan.prevPath)
+    if (pending) {
+      const txn = pending.transaction
+      if (!txn || !backup || !sameDeploymentPath(txn.backupPath, plan.prevPath)
+        || (txn.sidecarPath && !sameDeploymentPath(txn.sidecarPath, plan.sidecarPath))) {
+        return { ok: false, exitCode: 1, blocked: 'transaction', steps: [{ name: 'transaction', ok: false, detail: pending.message }] }
+      }
+      // 救援保留记录，主人确认后再清。
+      return await executeLocked({ ...plan, rollback: false }, deps, undefined, txn.previousVersion)
+    }
+    let started = false
+    const result = await executeLocked(plan, deps, journal && !backup ? (targetVersion, previousVersion) => {
+      journal.begin({
+        sha: deps.transactionSha, targetVersion, previousVersion: previousVersion || '无法确认',
+        sidecarPath: canonicalDeploymentPath(plan.sidecarPath), backupPath: canonicalDeploymentPath(plan.prevPath),
+        startedAt: new Date(deps.now()).toISOString(),
+      })
+      started = true
+    } : undefined)
+    if (started && journal && (
+      (result.ok && !deps.retainTransaction) || !result.steps.some(s => s.name === 'swap' && s.ok)
+      || (result.rolledBack && result.steps.filter(s => /^(restore|rollback)_/.test(s.name)).every(s => s.ok))
+    )) journal.finish()
+    return result
+  } finally { held?.release() }
 }
 
-async function executeLocked(plan: SelfDeployPlan, deps: SelfDeployDeps): Promise<SelfDeployResult> {
+async function executeLocked(
+  plan: SelfDeployPlan, deps: SelfDeployDeps, begin?: (targetVersion: string, previousVersion: string) => void, expectedBackupVersion?: string,
+): Promise<SelfDeployResult> {
   const steps: SelfDeployStep[] = []
   if (!samePath(plan.newBinaryPath,plan.prevPath) && deps.taskGate) {
     let reason:string|null
@@ -443,6 +456,10 @@ async function executeLocked(plan: SelfDeployPlan, deps: SelfDeployDeps): Promis
     return { ok: false, exitCode: 1, steps }
   }
   const version = (preflight.stdout || preflight.stderr).trim()
+  if (expectedBackupVersion && expectedBackupVersion !== '无法确认' && version !== expectedBackupVersion) {
+    steps.push({ name: 'preflight', ok: false, detail: `备份版本 ${version} 与部署事务中的上一版 ${expectedBackupVersion} 不符。` })
+    return { ok: false, exitCode: 1, steps }
+  }
   steps.push({ name: 'preflight', ok: true, detail: version })
 
   // 1b. 不签 + 包是 Developer ID 封的 ⇒ 拒绝(2026-10-10 评审):ad-hoc 的 sidecar 塞进 DevID 封好的 .app,
@@ -463,7 +480,6 @@ async function executeLocked(plan: SelfDeployPlan, deps: SelfDeployDeps): Promis
   // the very binary it was about to install — and then "swapped" the
   // now-broken `.prev` back onto the sidecar. Staging first means the good
   // bytes are already on a fresh inode by the time anything else moves.
-  deps.beforeStage?.(plan)
   try {
     stageBinary(deps, plan.newBinaryPath, plan.tmpPath)
   } catch (err) {
@@ -535,14 +551,22 @@ async function executeLocked(plan: SelfDeployPlan, deps: SelfDeployDeps): Promis
     deps.log('kept previous backup: current sidecar is broken')
   } else {
     try {
-      deps.fs.copyFile(plan.sidecarPath, plan.prevPath)
+      swapBinary(deps, plan.sidecarPath, plan.prevPath + '.new', plan.prevPath)
       steps.push({ name: 'backup', ok: true })
     } catch (err) {
       try { deps.fs.unlink(plan.tmpPath) } catch { /* best-effort tmp cleanup */ }
       companions?.discard()
+      deps.fs.unlink(plan.prevPath + '.new')
       steps.push({ name: 'backup', ok: false, detail: errMsg(err) })
       return { ok: false, exitCode: 1, steps, version }
     }
+  }
+
+  try { begin?.(version, previousVersion) }
+  catch (err) {
+    deps.fs.unlink(plan.tmpPath)
+    companions?.discard()
+    return { ok: false, exitCode: 1, steps: [...steps, { name: 'transaction', ok: false, detail: errMsg(err) }], version }
   }
 
   if (companions) steps.push(companions.install())
@@ -570,16 +594,7 @@ async function executeLocked(plan: SelfDeployPlan, deps: SelfDeployDeps): Promis
     const seal = sealApp(plan.signing, deps)
     steps.push(seal)
     if (!seal.ok) {
-      let restored = false
-      try {
-        swapBinary(deps, plan.prevPath, plan.tmpPath, plan.sidecarPath)
-        steps.push({ name: 'restore_swap', ok: true })
-        restored = true
-      } catch (err) {
-        try { deps.fs.unlink(plan.tmpPath) } catch { /* best-effort tmp cleanup */ }
-        steps.push({ name: 'restore_swap', ok: false, detail: errMsg(err) })
-      }
-      steps.push({ ...sealApp(plan.signing, deps), name: 'restore_seal' })
+      const restored = restoreBeforeRestart(plan, deps, steps)
       return { ok: false, exitCode: 1, steps, version, rolledBack: restored }
     }
   }
@@ -587,6 +602,19 @@ async function executeLocked(plan: SelfDeployPlan, deps: SelfDeployDeps): Promis
   // 4c. plugins source — before the restart so the new daemon boots with it.
   // Never fatal: the plugins gate after health is what judges the outcome.
   if (plan.pluginsSource) steps.push(ensurePluginsSource(plan.pluginsSource))
+
+  if (deps.beforeRestart) {
+    let reason: string | null
+    try { reason = await deps.beforeRestart(plan) }
+    catch (err) { reason = `无法复核重启条件：${errMsg(err)}` }
+    if (reason) {
+      steps.push({ name: 'restart_ready', ok: false, detail: reason })
+      const restored = restoreBeforeRestart(plan, deps, steps)
+      // 还原失败需要进故障计数和通知，并保留事务记录。
+      const safe = restored && steps.filter(s => s.name.startsWith('restore_')).every(s => s.ok)
+      return { ok: false, exitCode: 1, ...(safe ? { blocked: 'target' as const } : {}), steps, version, rolledBack: restored }
+    }
+  }
 
   // 5 + 6. restart + health gate. Everything past this point runs with the
   // NEW binary already on disk, so every failure from here rolls back
@@ -645,6 +673,21 @@ async function executeLocked(plan: SelfDeployPlan, deps: SelfDeployDeps): Promis
     rolledBack: rollbackOutcome.rolledBack,
     diagnostics,
   }
+}
+
+/** 重启门拒绝或整包签名失败时，旧 daemon 仍在运行。恢复磁盘内容即可。 */
+function restoreBeforeRestart(plan: SelfDeployPlan, deps: SelfDeployDeps, steps: SelfDeployStep[]): boolean {
+  let restored = false
+  try {
+    swapBinary(deps, plan.prevPath, plan.tmpPath, plan.sidecarPath)
+    steps.push({ name: 'restore_swap', ok: true })
+    restored = true
+  } catch (err) {
+    deps.fs.unlink(plan.tmpPath)
+    steps.push({ name: 'restore_swap', ok: false, detail: errMsg(err) })
+  }
+  if (plan.signing) steps.push({ ...sealApp(plan.signing, deps), name: 'restore_seal' })
+  return restored
 }
 
 // chmod BEFORE rename, deliberately: rename() is the only step that makes
@@ -750,7 +793,7 @@ function kickstart(deps: SelfDeployDeps, plan: SelfDeployPlan, reason: string): 
   // internal-api-info.json 所在的目录。用 node 的 dirname 而不是 posixDirname:
   // 后者只认 '/',遇到 win32 的反斜杠路径会退化成 '/',纸条就写错了地方(CI windows 抓到)。
   deps.markPlannedRestart?.(dirname(plan.infoPath), reason)
-  const r = deps.spawnSync('launchctl', ['kickstart', '-k', plan.serviceTarget], { windowsHide: true })
+  const r = deps.spawnSync('launchctl', ['kickstart', '-k', plan.serviceTarget], { timeoutMs: 30_000, windowsHide: true })
   if (r.status !== 0) return { name: 'restart', ok: false, detail: `launchctl kickstart exited ${r.status ?? 'null'}: ${r.stderr.trim()}` }
   return { name: 'restart', ok: true }
 }
@@ -912,7 +955,7 @@ async function performRollback(plan: SelfDeployPlan, deps: SelfDeployDeps, expec
 }
 
 function collectDiagnostics(deps: SelfDeployDeps, plan: SelfDeployPlan): string {
-  const printed = deps.spawnSync('launchctl', ['print', plan.serviceTarget], { windowsHide: true })
+  const printed = deps.spawnSync('launchctl', ['print', plan.serviceTarget], { timeoutMs: 5000, windowsHide: true })
   const relevant = (printed.stdout || '')
     .split('\n')
     .filter((l) => /state|runs|last exit/i.test(l))
@@ -937,8 +980,8 @@ export function defaultSelfDeployDeps(taskOptions: DeployTaskOptions = {}): Self
   return {
     taskGate: stateDir => defaultDeployTaskGate(stateDir,taskOptions),
     spawnSync(cmd, args, opts) {
-      const r = nodeSpawnSync(cmd, args, { encoding: 'utf8', timeout: opts?.timeoutMs, windowsHide: true })
-      return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
+      const r = nodeSpawnSync(cmd, args, { encoding: 'utf8', timeout: opts?.timeoutMs, killSignal: 'SIGKILL', windowsHide: true })
+      return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr || r.error?.message || '' }
     },
     fs: {
       exists: (p) => existsSync(p),
@@ -961,30 +1004,8 @@ export function defaultSelfDeployDeps(taskOptions: DeployTaskOptions = {}): Self
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     log: (line) => console.error(`[self deploy] ${line}`),
     markPlannedRestart: (stateDir, reason) => markPlannedRestart(stateDir, reason),
-    lock: (path) => acquireDeployLock(path),
+    lock: acquireDeploymentLockAt,
   }
-}
-
-/** O_EXCL 建锁文件写 pid;占着的进程已经没了 ⇒ 接过来(只试一次)。 */
-function acquireDeployLock(path: string): { release(): void } | { heldBy: number } {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const fd = openSync(path, 'wx', 0o600)
-      try { writeSync(fd, String(process.pid)) } finally { closeSync(fd) }
-      return { release: () => { try { if (readFileSync(path, 'utf8').trim() === String(process.pid)) unlinkSync(path) } catch { /* gone */ } } }
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
-      let pid = 0
-      try { pid = Number(readFileSync(path, 'utf8').trim()) } catch { /* vanished: retry */ }
-      if (pid > 0 && pidAlive(pid)) return { heldBy: pid }
-      try { unlinkSync(path) } catch { /* someone else took it over */ }
-    }
-  }
-  return { heldBy: 0 }
-}
-
-function pidAlive(pid: number): boolean {
-  try { process.kill(pid, 0); return true } catch (err) { return (err as NodeJS.ErrnoException).code === 'EPERM' }
 }
 
 function readTailLines(path: string, lines: number): string {

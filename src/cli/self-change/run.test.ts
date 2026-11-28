@@ -89,6 +89,23 @@ describe('runSelfChange 一条跑通', () => {
     expect(events).toEqual(['lock', 'deploy', 'selftest', 'rollback', 'record selftest', 'release'])
   })
 
+  it('keeps an interrupted selftest at the saved step and checks the journal on every resume', async () => {
+    const { deps, rec } = happy()
+    deps.lockDeployment = () => ({ release() {} })
+    let pending: string | null = '有未完成事务，先核对 .prev'
+    deps.pendingDeployment = () => pending
+    const saved = fakeState({ step: 'selftest' })
+    for (let i = 0; i < 2; i++) {
+      const { state } = await runSelfChange(saved, deps)
+      expect(state).toMatchObject({ step: 'selftest', result: 'deploy_tasks_blocked', error: pending })
+    }
+    pending = null
+    const { state } = await runSelfChange(saved, deps)
+    expect(state).toMatchObject({ step: 'selftest', result: 'deploy_tasks_blocked', error: expect.stringContaining('--abandon') })
+    expect(rec.deployed).toEqual([])
+    expect(rec.exec.some(command => command.includes('build-sidecar'))).toBe(false)
+  })
+
   it('--no-deploy ⇒ 合完就写报告,不碰部署与自检', async () => {
     const { deps, rec } = happy()
     const { state, exitCode } = await runSelfChange(fakeState({ noDeploy: true }), deps)

@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AutoshipPreparationError, decideAutoship, runAutoshipCommand, type AutoshipState, type AutoshipRound, type AutoshipRepo } from './self-autoship'
 import { SHIP_EXIT, type ShipResult } from './self-ship'
-import type { AutoshipConfig } from '../lib/autoship-config'
+import { autoshipWindowStatus, type AutoshipConfig } from '../lib/autoship-config'
+import { DeploymentLedgerError } from './deployment-failures'
 
 const previous = '1'.repeat(40)
 const dev = '2'.repeat(40)
 const next = '3'.repeat(40)
+const inWindow = new Date(2026, 10, 27, 2).getTime()
 const version = '1.8.12 (111111111)'
 const initial = { enabled: true, locked: true, halted: false, installed: previous, ancestor: true, dev,
   files: ['a.ts'], ci: 'green', redNotified: false, failed: false } as const
@@ -60,13 +62,14 @@ function fixture() {
     targetMismatch: vi.fn(async (): Promise<string | null> => null),
     pendingTransaction: vi.fn((): string | null => null),
     clearTransaction: vi.fn(),
+    repairLedger: vi.fn((): string | null => null),
     lastSkip: () => lastSkip,
     saveSkip: (value: AutoshipRound) => { lastSkip = value },
     loadState: () => state,
     saveState: (value: AutoshipState) => { state = value },
     lastRound: () => last,
     saveRound: (value: AutoshipRound) => { last = value },
-    now: () => 42_000,
+    now: () => inWindow,
     notice: vi.fn(async () => true),
     log: vi.fn(),
   }
@@ -97,8 +100,8 @@ describe('autoship CLI', () => {
 
   it('shared lock busy records a skip and does not touch the hub', async () => {
     const { deps, run, release } = fixture()
-    deps.lock.mockReturnValue({ ok: false, holder: 22 })
-    expect(await run()).toMatchObject({ exitCode: 2, message: expect.stringContaining('22') })
+    deps.lock.mockReturnValue({ ok: false, reason: '部署锁忙' })
+    expect(await run()).toMatchObject({ exitCode: 2, message: expect.stringContaining('部署锁忙') })
     expect(deps.lastSkip()?.exitCode).toBe(2)
     expect(deps.repo).not.toHaveBeenCalled()
     expect(release).not.toHaveBeenCalled()
@@ -117,7 +120,7 @@ describe('autoship CLI', () => {
     expect((await run()).exitCode).toBe(code)
     expect(repo.ci).not.toHaveBeenCalled()
     expect(repo.ship).not.toHaveBeenCalled()
-    expect(code === 2 ? deps.lastSkip() : deps.lastRound()).toMatchObject({ sha: dev, at: '1970-01-01T00:00:42.000Z', exitCode: code })
+    expect(code === 2 ? deps.lastSkip() : deps.lastRound()).toMatchObject({ sha: dev, at: new Date(inWindow).toISOString(), exitCode: code })
     expect(release).toHaveBeenCalledOnce()
   })
 
@@ -213,11 +216,11 @@ describe('autoship CLI', () => {
     deps.targetMismatch.mockResolvedValueOnce('LaunchAgent 与 daemon 不匹配')
     expect((await run()).exitCode).toBe(2)
     expect((await run({ status: true })).message).toContain('LaunchAgent 与 daemon 不匹配')
-    deps.lock.mockReturnValueOnce({ ok: false, holder: 42 })
+    deps.lock.mockReturnValueOnce({ ok: false, reason: '部署锁忙' })
     expect((await run()).exitCode).toBe(2)
     expect(repo.fetchDev).toHaveBeenCalledOnce()
     expect(deps.lastRound()?.message).toBe('全绿')
-    expect(deps.lastSkip()?.message).toContain('PID 42')
+    expect(deps.lastSkip()?.message).toContain('部署锁忙')
     expect(deps.notice).not.toHaveBeenCalled()
     expect(deps.loadState().fail_streak).toBe(0)
   })
@@ -243,4 +246,63 @@ describe('autoship CLI', () => {
     expect(deps.loadState().fail_streak).toBe(0)
   })
 
+})
+
+describe('automatic deployment window', () => {
+  const time = (hours: number, minutes: number) => new Date(2026, 10, 27, hours, minutes).getTime()
+  it('includes 01:00 and excludes 07:00 by default', () => {
+    expect(autoshipWindowStatus({}, time(0, 59))).toContain('下次窗口')
+    expect(autoshipWindowStatus({}, time(1, 0))).toBeNull()
+    expect(autoshipWindowStatus({}, time(6, 59))).toBeNull()
+    expect(autoshipWindowStatus({}, time(7, 0))).toContain('下次窗口')
+  })
+  it('accepts both sides of midnight within a configured window', () => {
+    const config = { auto_ship_window: { start: '22:30', end: '04:15' } }
+    expect(autoshipWindowStatus(config, time(22, 29))).toContain('22:30–04:15')
+    expect(autoshipWindowStatus(config, time(22, 30))).toBeNull()
+    expect(autoshipWindowStatus(config, time(0, 0))).toBeNull()
+    expect(autoshipWindowStatus(config, time(4, 15))).toContain('下次窗口')
+  })
+  it('skips before any target or repo work outside the window and reports the next local window', async () => {
+    const { deps, run } = fixture()
+    deps.now = () => time(12, 0)
+    expect(await run()).toMatchObject({ exitCode: 2, message: expect.stringContaining('下次窗口') })
+    expect((await run({ status: true })).message).toContain('下次窗口')
+    expect(deps.targetMismatch).not.toHaveBeenCalled()
+    expect(deps.repo).not.toHaveBeenCalled()
+  })
+})
+
+it('pauses on a ledger read error without counting a deployment or retrying before unhalt', async () => {
+  const { deps, repo, run } = fixture()
+  repo.failedTree.mockImplementationOnce(() => { throw new DeploymentLedgerError('坏 JSON') })
+  expect(await run()).toMatchObject({ exitCode: 1, message: expect.stringContaining('坏 JSON') })
+  expect(deps.loadState()).toMatchObject({ fail_streak: 0, pause_reason: expect.stringContaining('坏 JSON') })
+  expect(await run()).toMatchObject({ exitCode: 2, message: expect.stringContaining('坏 JSON') })
+  expect(repo.ship).not.toHaveBeenCalled()
+  expect(deps.notice).toHaveBeenCalledOnce()
+  deps.repairLedger.mockReturnValueOnce('/fixture/ledger.bad')
+  expect(await run({ unhalt: true })).toMatchObject({ exitCode: 0, message: expect.stringContaining('/fixture/ledger.bad') })
+  expect(deps.loadState().pause_reason).toBeUndefined()
+})
+
+it('keeps failure count, rollback conclusion and notification when the ledger write fails', async () => {
+  const { deps, repo, run } = fixture()
+  repo.ship.mockResolvedValueOnce({ exitCode: SHIP_EXIT.selftest_red, message: '自检红，已回滚。', ledgerError: '失败账磁盘只读' })
+  expect(await run()).toMatchObject({ exitCode: 1, message: expect.stringContaining('自检红，已回滚。') })
+  expect(deps.loadState()).toMatchObject({ failedShas: [dev], fail_streak: 1, pause_reason: '失败账磁盘只读' })
+  expect(deps.notice).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/自检[\s\S]*已回滚[\s\S]*失败账磁盘只读/))
+  expect(await run()).toMatchObject({ exitCode: 2, message: expect.stringContaining('失败账磁盘只读') })
+  expect(repo.ship).toHaveBeenCalledOnce()
+})
+
+it('acknowledges a handled transaction independently if the ledger repair still fails', async () => {
+  const { deps, run } = fixture()
+  deps.pendingTransaction.mockReturnValue('待确认事务')
+  deps.repairLedger.mockImplementationOnce(() => { throw new DeploymentLedgerError('无法备份') })
+  expect(await run({ unhalt: true })).toMatchObject({
+    exitCode: 1, message: expect.stringMatching(/已确认清除部署事务.*无法备份/),
+  })
+  expect(deps.clearTransaction).toHaveBeenCalledOnce()
+  expect(deps.loadState().pause_reason).toContain('无法备份')
 })

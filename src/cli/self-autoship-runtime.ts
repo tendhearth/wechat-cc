@@ -1,23 +1,24 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
 import { cpus, homedir, loadavg } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import z from 'zod'
 import { loadAgentConfig } from '../lib/agent-config'
-import { loadAutoshipConfig, patchAutoshipConfig } from '../lib/autoship-config'
+import { autoshipWindowStatus, loadAutoshipConfig, patchAutoshipConfig } from '../lib/autoship-config'
 import { readApiInfo } from '../lib/api-info'
 import { log } from '../lib/log'
 import { readJsonObject, writeFileAtomic } from '../lib/json-file'
 import { defaultCiTriageDeps, runCiTriage, CI_TRIAGE_EXIT } from './ci-triage-run'
 import { defaultDeployTaskGate } from './deploy-task-gate'
-import { deploymentFailures, gitObjectId, matchesFailedTree } from './deployment-failures'
+import { DeploymentLedgerError, deploymentFailures, gitObjectId, matchesFailedTree } from './deployment-failures'
 import { makeDaemonClient, type DeployReadiness } from './self-change/daemon-client'
 import { makeGit, nodeGitSpawnSync, type Git } from './self-change/git'
 import { launchAgentPlistPath } from './self-change/index'
 import { defaultWorkdir } from './self-change/policy'
-import { acquireLock, makeStateStore, selfChangeDir } from './self-change/state'
+import { tryAutoshipLock, makeStateStore, selfChangeDir } from './self-change/state'
 import { hubPath } from './self-change/steps'
-import { acquireDeploymentLock, parseLaunchAgentPlist, planSelfDeploy, type DeploymentLock, type SelfDeployPlan } from './self-deploy'
+import { parseLaunchAgentPlist, planSelfDeploy, type SelfDeployPlan } from './self-deploy'
+import { acquireDeploymentLock, DEPLOYMENT_BUSY, deploymentLockPath, deploymentTransactions, type DeploymentLock } from './deployment-transaction'
 import { DEFAULT_MAX_LOAD_PER_CPU } from './self-ship'
 import { shipFromRepo } from './self-ship-runtime'
 import { AutoshipPreparationError, type runAutoshipCommand, type AutoshipRepo, type InstalledVersion } from './self-autoship'
@@ -31,14 +32,12 @@ const stateShape = z.object({
   pause_reason: z.string().optional(),
 })
 const roundShape = z.object({ sha: gitObjectId.nullable(), at: z.string(), exitCode: z.number().int(), message: z.string() })
-const transactionShape = z.object({ sha: gitObjectId, previousVersion: z.string(), backupPath: z.string(), startedAt: z.string() })
 
 export function autoshipStore(stateDir: string) {
   const dir = selfChangeDir(stateDir)
   const statePath = join(dir, 'autoship-state.json')
   const roundPath = join(dir, 'autoship.json')
   const skipPath = join(dir, 'autoship-skip.json')
-  const transactionPath = join(dir, 'autoship-transaction.json')
   const save = (file: string, value: unknown) => writeFileAtomic(file, JSON.stringify(value) + '\n', { mode: 0o600 })
   const readRound = (path: string) => existsSync(path) ? roundShape.parse(readJsonObject(path)) : null
   return {
@@ -48,17 +47,6 @@ export function autoshipStore(stateDir: string) {
     saveRound: (round: z.infer<typeof roundShape>) => save(roundPath, round),
     lastSkip: () => readRound(skipPath),
     saveSkip: (round: z.infer<typeof roundShape>) => save(skipPath, round),
-    saveTransaction: (txn: z.infer<typeof transactionShape>) => save(transactionPath, txn),
-    clearTransaction: () => rmSync(transactionPath, { force: true }),
-    pendingTransaction() {
-      if (!existsSync(transactionPath)) return null
-      try {
-        const txn = transactionShape.parse(readJsonObject(transactionPath))
-        return `发现未完成的部署事务 ${txn.sha}（${txn.startedAt}）。上一版 ${txn.previousVersion}，备份 ${txn.backupPath}。请核对安装和备份后运行 self autoship --unhalt。`
-      } catch {
-        return `部署事务记录无法读取（${transactionPath}）。请核对安装和备份后运行 self autoship --unhalt。`
-      }
-    },
   }
 }
 
@@ -99,10 +87,10 @@ export function refreshAutoshipDev(git: Git, timeoutMs: number): string | null {
   return head.code === 0 && parsed.success ? parsed.data : null
 }
 
-export function defaultAutoshipDeps(stateDir: string, sourceRoot: string | null): Parameters<typeof runAutoshipCommand>[0] {
-  const homeDir = homedir()
+export function defaultAutoshipDeps(stateDir: string, sourceRoot: string | null, homeDir = homedir()): Parameters<typeof runAutoshipCommand>[0] {
   const plistPath = launchAgentPlistPath(homeDir)
   const store = autoshipStore(stateDir)
+  const transactions = deploymentTransactions(deploymentLockPath(homeDir), stateDir)
   const settings = () => loadAutoshipConfig(stateDir)
   const selfChange = () => loadAgentConfig(stateDir).self_change
   const workdirFor = () => resolve(selfChange()?.workdir ?? defaultWorkdir(homeDir, process.platform))
@@ -130,9 +118,6 @@ export function defaultAutoshipDeps(stateDir: string, sourceRoot: string | null)
     const expectedPid = Number(process.env.WECHAT_CC_AUTOSHIP_DAEMON_PID)
     const bootAt = process.env.WECHAT_CC_AUTOSHIP_DAEMON_BOOT
     if (!bootAt || !Number.isSafeInteger(expectedPid) || expectedPid <= 1) return { reason: '自动部署轮须由日用 LaunchAgent 的 daemon 拉起。' }
-    const ready = await daemon.deployReadiness()
-    if (!ready) return { reason: '无法核对发起自动部署的 daemon。' }
-    if (!ready.compiled) return { reason: '源码模式的 daemon 跳过自动部署。' }
     try {
       const plistXml = readFileSync(plistPath, 'utf8')
       const target = targetPlan(plistXml)
@@ -143,8 +128,11 @@ export function defaultAutoshipDeps(stateDir: string, sourceRoot: string | null)
       if (plan && (!samePath(plan.sidecarPath, target.sidecarPath) || plan.serviceTarget !== target.serviceTarget)) {
         return { reason: 'LaunchAgent 的部署目标发生变化。' }
       }
-      const job = spawnSync('/bin/launchctl', ['print', target.serviceTarget], { encoding: 'utf8', timeout: 5000, windowsHide: true })
+      const job = spawnSync('/bin/launchctl', ['print', target.serviceTarget], { encoding: 'utf8', timeout: 5000, killSignal: 'SIGKILL', windowsHide: true })
       if (job.status === 0) {
+        const ready = await daemon.deployReadiness()
+        if (!ready) return { reason: '无法核对发起自动部署的 daemon。' }
+        if (!ready.compiled) return { reason: '源码模式的 daemon 跳过自动部署。' }
         if (matchesLaunchAgent(ready, {
           pid: expectedPid, bootAt, stateDir, plistPath, program, sidecar: target.sidecarPath, supervisedByApp: mode === '--daemon',
         }, parseLoadedLaunchAgent(job.stdout))) return { ready }
@@ -156,7 +144,7 @@ export function defaultAutoshipDeps(stateDir: string, sourceRoot: string | null)
   const installed = (): InstalledVersion | null => {
     try {
       const plan = targetPlan(readFileSync(plistPath, 'utf8'))
-      const result = spawnSync(plan.sidecarPath, ['--version'], { encoding: 'utf8', timeout: 5000, windowsHide: true })
+      const result = spawnSync(plan.sidecarPath, ['--version'], { encoding: 'utf8', timeout: 5000, killSignal: 'SIGKILL', windowsHide: true })
       const version = (result.stdout || result.stderr || '').trim()
       return result.status === 0 && version ? parseInstalledVersion(version) : null
     } catch { return null }
@@ -164,6 +152,9 @@ export function defaultAutoshipDeps(stateDir: string, sourceRoot: string | null)
 
   return {
     ...store,
+    pendingTransaction: () => transactions.pending()?.message ?? null,
+    clearTransaction: transactions.confirm,
+    repairLedger: failures.repair,
     platform: process.platform,
     settings,
     writeSettings: patch => patchAutoshipConfig(stateDir, patch),
@@ -172,19 +163,20 @@ export function defaultAutoshipDeps(stateDir: string, sourceRoot: string | null)
       const result = await checkTarget()
       return 'reason' in result ? result.reason : null
     },
-    lock() {
-      const selfChangeLock = acquireLock(stateDir, process.pid, undefined, undefined, 'autoship')
-      if (!selfChangeLock.ok) return selfChangeLock
+    lock(management) {
+      // --unhalt 只确认部署事务和失败账，无需碰中枢或自改锁。
+      const selfChangeLock = management ? null : tryAutoshipLock(stateDir)
+      if (selfChangeLock && !selfChangeLock.ok) return selfChangeLock
       try {
         const held = acquireDeploymentLock(homeDir)
-        if ('heldBy' in held) {
-          selfChangeLock.release()
-          return { ok: false, holder: held.heldBy }
+        if ('busy' in held) {
+          selfChangeLock?.release()
+          return { ok: false, reason: DEPLOYMENT_BUSY + '本轮跳过。' }
         }
         deployLock = held
-        return { ok: true, release() { deployLock = undefined; try { held.release() } finally { selfChangeLock.release() } } }
+        return { ok: true, release() { deployLock = undefined; try { held.release() } finally { selfChangeLock?.release() } } }
       } catch (err) {
-        selfChangeLock.release()
+        selfChangeLock?.release()
         throw err
       }
     },
@@ -232,8 +224,11 @@ export function defaultAutoshipDeps(stateDir: string, sourceRoot: string | null)
         isAncestor: (older, newer) => git.run(['merge-base', '--is-ancestor', older, newer]).code === 0,
         changedFiles,
         failedTree(candidate, historicalShas) {
-          const records = failures.load()
-          if (matchesFailedTree(git, candidate, records)) return true
+          let records: ReturnType<typeof failures.load>
+          try {
+            records = failures.load()
+            if (matchesFailedTree(git, candidate, records)) return true
+          } catch (err) { throw new DeploymentLedgerError(err) }
           const selfChangeShas = makeStateStore(stateDir).list()
             .filter(run => run.result === 'deploy_failed' || run.result === 'selftest_failed_rolled_back' || run.deploy?.rolledBack)
             .flatMap(run => run.merge?.sha && gitObjectId.safeParse(run.merge.sha).success ? [run.merge.sha] : [])
@@ -272,9 +267,7 @@ export function defaultAutoshipDeps(stateDir: string, sourceRoot: string | null)
             stateDir, repoRoot: tree, checkedSha: sha, lock: deployLock,
             taskOptions: { waitTasks: true, nonInteractive: true },
             hooks: {
-              beforeStage: plan => store.saveTransaction({
-                sha, previousVersion: previous.version, backupPath: plan.prevPath, startedAt: new Date().toISOString(),
-              }),
+              transactionSha: sha,
               async confirmTarget(plan, previousVersion) {
                 try {
                   if (workdirFor() !== workdir || repoUrl() !== url || remoteUrl() !== url) return '仓库配置在构建期间发生变化。'
@@ -286,22 +279,25 @@ export function defaultAutoshipDeps(stateDir: string, sourceRoot: string | null)
                   dirtyAfterBuild = true
                   return '工作树在构建期间发生变化。'
                 }
+                if (previousVersion !== previous.version) return '已安装版本发生变化。'
+                const config = settings()
+                if (config.auto_ship !== true) return '自动部署已关闭。'
+                return autoshipWindowStatus(config, Date.now())
+              },
+              async beforeRestart(plan) {
                 const tasks = await defaultDeployTaskGate(stateDir, { nonInteractive: true })
                 if (tasks) return tasks
+                if ((loadavg()[0] ?? 0) / Math.max(1, cpus().length) > DEFAULT_MAX_LOAD_PER_CPU) return '机器负载过高。'
                 const target = await checkTarget(plan)
                 if ('reason' in target) return target.reason
                 if (!target.ready.idle) return 'daemon 正在处理会话、后台工作或关机。'
                 if (!target.ready.guarded) return '网络守护未放行。'
-                if ((loadavg()[0] ?? 0) / Math.max(1, cpus().length) > DEFAULT_MAX_LOAD_PER_CPU) return '机器负载过高。'
-                try {
-                  if (settings().auto_ship !== true) return '自动部署已关闭。'
-                  if (workdirFor() !== workdir || repoUrl() !== url || remoteUrl() !== url) return '仓库配置在复核期间发生变化。'
-                } catch { return '无法复核自动部署配置。' }
-                if (previousVersion !== previous.version || !samePath(dirname(plan.infoPath), target.ready.stateDir)) return '已安装版本或状态目录发生变化。'
-                return null
+                // 就绪返回后只做本地配置检查，随后立即交给 kickstart。
+                const config = settings()
+                if (config.auto_ship !== true) return '自动部署已关闭。'
+                return autoshipWindowStatus(config, Date.now())
               },
             },
-            finishTransaction: store.clearTransaction,
           })
           if (dirtyAfterBuild) throw new AutoshipPreparationError(result.message)
           return result

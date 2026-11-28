@@ -65,24 +65,26 @@ wechat-cc self deploy --json     # 机器可读
 
 维护用 macOS 可以在 `dev` 的 CI 通过后自动部署，默认关闭。在源码工作区运行 `wechat-cc self autoship --enable` 会记下仓库地址。打包版也可从 `self_change.repo_url` 或已有中枢仓库查到地址。自动轮需要 `git`、`gh`、`bun` 和 `rustc`，以及访问仓库和 GitHub Actions 的权限。
 
-- `wechat-cc self autoship --disable` 关闭自动部署，已启动的轮次在换文件前也会重读开关。
-- `wechat-cc self autoship --status` 显示上次有效结论、当前跳过原因、准备暂停、未完成事务与停机状态。
-- 独立配置文件为 `$STATE_DIR/self-change/autoship-config.json`，由 CLI 原子写入，权限为 0600。`auto_ship_interval_min` 缺省 20 分钟，最短 5 分钟。daemon 每分钟重读配置。上一个 detached CLI 活着时，定时器继续等它退出。`wechat-cc self autoship` 的部署轮由 daemon 拉起，终端可直接运行带管理选项的命令。
+- `wechat-cc self autoship --disable` 关闭自动部署，已启动的轮次在换盘前和重启前都会重读开关。
+- `wechat-cc self autoship --status` 显示上次有效结论、当前跳过原因、暂停原因、未完成事务与停机状态。窗外另显示下次窗口。
+- 独立配置文件为 `$STATE_DIR/self-change/autoship-config.json`，由 CLI 原子写入，权限为 0600。`auto_ship_interval_min` 缺省 20 分钟，最短 5 分钟。时间窗缺省为本地时间 01:00–07:00，含起点、不含终点。用 `"auto_ship_window": {"start": "22:30", "end": "04:15"}` 可配置跨午夜窗口。手动 `self ship` 全天可用。daemon 每分钟重读配置。上一个 detached CLI 活着时，定时器继续等它退出。`wechat-cc self autoship` 的部署轮由 daemon 拉起，终端可直接运行带管理选项的命令。
 
-每轮先拿自改的中枢互斥锁和部署事务锁，争锁只记跳过。发现 `autoship-transaction.json` 遗留时停机并尝试通知一次，记录目标 SHA、上一版版本、备份位置与开始时间。核对实际安装和备份后运行 `wechat-cc self autoship --unhalt`，这表示主人已处理该事务。准备失败也会暂停并通知一次，例如中枢 `origin` 与配置不符、建不了工作树或工作树有改动。修复后同样用 `--unhalt` 恢复。短暂 fetch 失败留给下一轮重试。
+每轮只尝试拿一次自改的中枢互斥锁，再尝试部署锁。遇到活跃的自改锁、残留的锁或接管标记，只跳过并在 `--status` 记录原因。准备失败也会暂停并通知一次，例如中枢 `origin` 与配置不符、建不了工作树或工作树有改动。修复后用 `--unhalt` 恢复。短暂 fetch 失败留给下一轮重试。
 
 只有发起轮次的打包 daemon 与已加载的日用 LaunchAgent 匹配时才继续。CLI 通过本地 API 验证 PID、启动时间、状态目录和 sidecar 路径，再核对 LaunchAgent 的启动程序和当前 PID。源码和独立实例的跳过原因记在状态里。
 
-自动轮 fetch `origin/dev` 后，要求已装 sidecar 的提交能确认为它的祖先。已是顶端、tree 相同或只有 Markdown 差异时结束。候选 SHA 必须有已绿的 dev 推送轮，包含 CI 明确复用队列回执的轻量轮。CI 红按 SHA 只尝试通知一次。部署失败记录包含 Git tree 和忽略 Markdown 后的内容指纹，相同 tree 或只改 Markdown 的候选继续跳过。手动 ship 自检红和自改部署相关失败共享该记录，`--unhalt` 保留记录。
+自动轮 fetch `origin/dev` 后，要求已装 sidecar 的提交能确认为它的祖先。已是顶端、tree 相同或只有 Markdown 差异时结束。候选 SHA 必须有已绿的 dev 推送轮，包含 CI 明确复用队列回执的轻量轮。CI 红按 SHA 只尝试通知一次。部署失败记录包含 Git tree 和忽略 Markdown 后的内容指纹，相同 tree 或只改 Markdown 的候选继续跳过。自改部署相关失败，以及已知构建来源的手动 ship 自检或换盘后的健康、插件、拉消息门失败，共享该记录。账本故障使自动轮暂停并报告原因，部署结果、失败计数及通知照常处理。`--unhalt` 保留有效账本，遇到损坏内容时备份原文件后重建。
 
-构建使用 `<workdir>/autoship` 中钉住候选 SHA 的工作树。负载、网络守护、交办门放行后运行 `bun install --frozen-lockfile` 并构建。部署暂存前写事务，签完暂存产物后、写备份与换文件前再次检查。临门 fetch 上限为 25 秒，查询失败或远端顶端变化时放弃本轮。还会复核开关、工作树、安装目标、交办、负载和网络守护，并通过 daemon 查询在途会话、后台忙碌及关机状态。自检全绿或已确认回滚后清除事务。换文件前安全退出也清除事务。
+构建使用 `<workdir>/autoship` 中钉住候选 SHA 的工作树。负载、网络守护、交办门放行后运行 `bun install --frozen-lockfile` 并构建。签完暂存产物后、备份与换盘前再次核对远端、工作树和已装版本。临门 fetch 上限为 25 秒，查询失败或远端顶端变化时放弃本轮。备份、换盘和整包重签完成后，检查交办和负载，再查询发起轮次的 daemon 有无在途会话、后台工作或关机，网络守护是否放行。CLI 最后重读开关和时间窗，再调用重启。重启前拒绝时恢复磁盘上的旧 sidecar 并重新封包，旧 daemon 继续运行。
 
 构建、部署或自检失败经 daemon 向主人尝试通知，带 SHA、阶段、回滚结果和当前版本。连续两次此类故障停机，成功或 `--unhalt` 清零。上次有效结论写入 `autoship.json`，当前跳过写入 `autoship-skip.json`，停机与计数写入 `autoship-state.json`，均在 `$STATE_DIR/self-change/`，原子写、0600。自改停机单独解除。`self change --no-deploy` 只限制这条自改，合入的提交仍可能被自动部署。
 
 ### 已知限制
 
 - 评审 7：构建产物与健康门还没有用完整目标 SHA 做强绑定。
-- 评审 8：PID 文件锁仍有极端的初始化、回收竞态，PID 复用或持有者卡死也可能阻挡后续运行。
+- 重启前就绪查询是一次快照。查询返回后到 launchd 执行重启之前，daemon 仍可能接受新工作或开始关机，配置也可能再变。换盘后若 daemon 在最终查询前意外退出，launchd 也可能自行拉起磁盘上的版本。部署守卫仍使用现有任务门与就绪接口。
+- 自改入口自己的 PID 锁仍沿用既有回收方式。`--unhalt` 只取部署锁。自改锁或 `lock.steal` 残留需要另行确认处理。
+- 部署 CLI 被强制终止时，SQLite 锁由操作系统释放，已启动的系统命令可能短暂继续。已经进入换盘阶段的事务会留档，需要检查安装和备份。
 - 评审 11：通知去重先落盘，当前没有待投通知账和补投。
 - 评审 12：不同克隆对旧 sidecar 的短 SHA 可能有不同解释。
 - 最后的 daemon 查询是即时状态，API 回包至重启之间仍可能收到新任务。
@@ -112,7 +114,9 @@ wechat-cc self deploy --json     # 机器可读
 
 **不签却往 Developer ID 封好的包里换 ⇒ 拒绝**(2026-10-10):不签时先 `codesign -dv` 看一眼 .app,带 TeamIdentifier ⇒ `signing` 步骤失败、什么都不动(09-28 事故:ad-hoc sidecar 塞进 DevID 包,TCC 框把 daemon 堵死)。从 `.prev` 回滚不拦;确实要换就加 `--allow-unsigned`。
 
-**部署锁**位于 `~/.wechat-cc-self-deploy.lock`，同一用户的 LaunchAgent 共用这把锁。手动 ship、手动 deploy、自改和自动轮在确认目标前取锁，持到健康门、自检或回滚结束。内层部署复用已持的锁。手动 deploy 争锁退出 1，自动轮争锁退出 2。
+**部署锁**位于 `~/.wechat-cc-self-deploy.lock.sqlite`。手动 ship、手动 deploy、自改和自动轮共用 SQLite 独占事务，持到健康门、自检或回滚结束。内层部署复用已持的锁。进程退出时系统释放锁，SQLite 文件保留。手动 deploy 和 ship 争锁退出 1，自动轮争锁退出 2。重启命令限时 30 秒，诊断查询限时 5 秒。
+
+**部署事务记录**与锁文件相邻（后缀 `.transaction.json`）。原子更新备份后、换盘之前写入新旧版本、目标 sidecar、备份位置和开始时间。自动轮同时记录完整目标 SHA。日用状态目录中的旧 `autoship-transaction.json` 也会被读取。发现遗留记录时，所有前进部署都会拒绝，自动轮停机并尝试通知。可以用 `self deploy --binary <记录中的备份>` 回滚。核对现场后运行 `self autoship --unhalt` 确认清理，救援回滚本身保留记录。正常部署通过健康门、外层自检全绿或确认自动回滚后会结清自己的事务。自改若从中断的 `selftest` 恢复，会先检查记录并停在原步骤。手动验收或回滚并确认事务后，可用 `self change --abandon <id>` 归档这条已合入的自改。
 
 ## 回滚别把备份吃了(2026-09-18 复审)
 

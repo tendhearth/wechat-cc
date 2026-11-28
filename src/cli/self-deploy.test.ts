@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, uti
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
-  acquireDeploymentLock,
   defaultSelfDeployDeps,
   detectDeveloperIdIdentity,
   executeSelfDeploy,
@@ -14,6 +13,7 @@ import {
   type SelfDeployDeps,
   type SelfDeployPlan,
 } from './self-deploy'
+import { acquireDeploymentLock, deploymentTransactions } from './deployment-transaction'
 import { readPluginsSourcePointer, writePluginsSourcePointer } from '../lib/plugins-source'
 
 // ── parseLaunchAgentPlist ────────────────────────────────────────────
@@ -1107,18 +1107,6 @@ describe('executeSelfDeploy — signing guard and deploy lock', () => {
     writeFileSync(c.plan.prevPath, 'PREV'); c.plan.newBinaryPath = c.plan.prevPath
     expect((await executeSelfDeploy(c.plan, c.deps)).steps.find(s => s.name === 'signing')).toBeUndefined()
   })
-  it('a second deploy while one holds the lock is refused; a stale lock from a dead pid is taken over', async () => {
-    const h = harness()
-    h.plan.lockPath = join(h.dir, 'state', 'self-deploy.lock')
-    writeFileSync(h.plan.lockPath, String(process.pid))
-    const busy = await executeSelfDeploy(h.plan, h.deps)
-    expect(busy).toMatchObject({ ok: false, exitCode: 1 })
-    expect(busy.steps).toEqual([expect.objectContaining({ name: 'lock', ok: false })])
-    expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
-    writeFileSync(h.plan.lockPath, '999999999')
-    expect((await executeSelfDeploy(h.plan, h.deps)).ok).toBe(true)
-    expect(existsSync(h.plan.lockPath)).toBe(false)
-  })
 })
 
 // 健康门看 /v1/health.polling(2026-10-23,核心链进模块容器的 PR 0b):这一版起了的拉消息循环少于该起的 ⇒ 收不到微信 ⇒ 红 + 回滚。
@@ -1182,28 +1170,23 @@ describe('deployment transaction', () => {
     expect(planSelfDeploy({ ...input, app: '/other.app', stateDir: join(h.dir, 'different') }).lockPath).toBe(target.lockPath)
     h.plan.lockPath = target.lockPath
     const held = acquireDeploymentLock(h.dir)
-    if ('heldBy' in held) throw new Error('fixture unexpectedly busy')
+    if ('busy' in held) throw new Error('fixture unexpectedly busy')
     try {
       expect((await executeSelfDeploy(h.plan, h.deps, held)).ok).toBe(true)
-      expect(acquireDeploymentLock(h.dir)).toEqual({ heldBy: process.pid })
+      expect(acquireDeploymentLock(h.dir)).toEqual({ busy: true })
       expect((await executeSelfDeploy(h.plan, h.deps)).steps[0]).toMatchObject({ name: 'lock', ok: false })
       const rollback = { ...h.plan, newBinaryPath: h.plan.prevPath, rollback: false }
       expect((await executeSelfDeploy(rollback, h.deps, held)).ok).toBe(true)
       expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
     } finally { held.release() }
-    expect(existsSync(target.lockPath!)).toBe(false)
+    expect(existsSync(target.lockPath!)).toBe(true)
   })
 
-  it('journals before staging and runs the final gate after signing, with live binary and backup untouched on refusal', async () => {
+  it('checks the source after staging, with live binary and backup untouched on refusal', async () => {
     const h = harness()
     writeFileSync(h.plan.prevPath, 'EARLIER_BINARY')
     h.enableSigning()
     const stages: string[] = []
-    h.deps.beforeStage = plan => {
-      expect(plan.prevPath).toBe(h.plan.prevPath)
-      expect(existsSync(plan.tmpPath)).toBe(false)
-      stages.push('journal')
-    }
     h.deps.confirmTarget = async (plan, previous) => {
       expect(existsSync(plan.tmpPath)).toBe(true)
       expect(previous).toContain('9.9.8-old')
@@ -1216,10 +1199,71 @@ describe('deployment transaction', () => {
     expect(result).toMatchObject({ ok: false, blocked: 'target' })
     expect(result.steps.at(-1)?.detail).toBe('远端 dev 已变化')
     expect(result.steps.find(s => s.name === 'sign')).toMatchObject({ ok: true })
-    expect(stages).toEqual(['journal', 'final'])
+    expect(stages).toEqual(['final'])
     expect(existsSync(h.plan.tmpPath)).toBe(false)
     expect(h.kickstartCalls).toBe(0)
     expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
     expect(readFileSync(h.plan.prevPath, 'utf8')).toBe('EARLIER_BINARY')
   })
+})
+
+it('blocks forward deploys across state directories and only allows rescue with the bound backup', async () => {
+  const h = harness()
+  const other = harness()
+  const held = acquireDeploymentLock(h.dir)
+  if ('busy' in held) throw new Error('fixture unexpectedly busy')
+  h.plan.lockPath = other.plan.lockPath = join(h.dir, '.wechat-cc-self-deploy.lock.sqlite')
+  const journal = deploymentTransactions(h.plan.lockPath, dirname(h.plan.infoPath))
+  try {
+    h.deps.retainTransaction = true
+    h.deps.transactionSha = 'a'.repeat(40)
+    expect((await executeSelfDeploy(h.plan, h.deps, held)).ok).toBe(true)
+    expect(journal.pending()?.transaction).toMatchObject({
+      backupPath: expect.stringContaining('wechat-cc-cli.prev'), previousVersion: 'wechat-cc-cli 9.9.8-old',
+      sha: 'a'.repeat(40),
+    })
+    for (const attempt of [h.plan, other.plan, { ...other.plan, newBinaryPath: other.plan.prevPath }]) {
+      expect(await executeSelfDeploy(attempt, h.deps, held)).toMatchObject({ ok: false, blocked: 'transaction' })
+    }
+    expect(h.kickstartCalls).toBe(1)
+    expect(readFileSync(h.plan.prevPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+    expect((await executeSelfDeploy({ ...h.plan, newBinaryPath: h.plan.prevPath }, h.deps, held)).ok).toBe(true)
+    expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+    expect(journal.pending()).not.toBeNull()
+    journal.confirm()
+    expect(journal.pending()).toBeNull()
+  } finally { held.release() }
+})
+
+it.each([null, 'daemon 忙'])('queries readiness after backup, swap and seal, before the first kickstart (%s)', async reason => {
+  const h = harness()
+  h.enableSigning()
+  const held = acquireDeploymentLock(h.dir)
+  if ('busy' in held) throw new Error('fixture unexpectedly busy')
+  h.plan.lockPath = join(h.dir, '.wechat-cc-self-deploy.lock.sqlite')
+  const journal = deploymentTransactions(h.plan.lockPath, dirname(h.plan.infoPath))
+  let queried = false
+  h.deps.beforeRestart = async plan => {
+    queried = true
+    expect(journal.pending()).not.toBeNull()
+    expect(readFileSync(plan.prevPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+    expect(readFileSync(plan.sidecarPath, 'utf8')).toBe('NEW_BINARY_CONTENT')
+    expect(h.codesignCalls.at(-1)?.args.at(-1)).toBe(plan.signing?.appPath)
+    expect(h.kickstartCalls).toBe(0)
+    return reason
+  }
+  try {
+    const result = await executeSelfDeploy(h.plan, h.deps, held)
+    expect(queried).toBe(true)
+    if (reason) {
+      expect(result).toMatchObject({ ok: false, blocked: 'target', rolledBack: true })
+      expect(h.kickstartCalls).toBe(0)
+      expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+      expect(h.codesignCalls.at(-1)?.sidecarContentAtCall).toBe('OLD_BINARY_CONTENT')
+    } else {
+      expect(result.ok).toBe(true)
+      expect(h.kickstartCalls).toBe(1)
+    }
+    expect(journal.pending()).toBeNull()
+  } finally { held.release() }
 })

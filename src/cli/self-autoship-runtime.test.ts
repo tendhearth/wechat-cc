@@ -6,7 +6,9 @@ import { autoshipStore, defaultAutoshipDeps, matchesLaunchAgent, parseInstalledV
 
 import { makeGit, nodeGitSpawnSync } from './self-change/git'
 import { loadAgentConfig, saveAgentConfig } from '../lib/agent-config'
-import { AutoshipPreparationError } from './self-autoship'
+import { deploymentTransactions, deploymentLockPath } from './deployment-transaction'
+import { patchAutoshipConfig } from '../lib/autoship-config'
+import { AutoshipPreparationError, runAutoshipCommand } from './self-autoship'
 
 const sha = 'b'.repeat(40)
 
@@ -47,15 +49,20 @@ it('journal survives reopening and describes target, previous version, backup an
   const dir = mkdtempSync(join(tmpdir(), 'cc-autoship-journal-'))
   try {
     const transaction = { sha, previousVersion: '1.2.3 (1234567)', backupPath: '/app/cli.prev', startedAt: '2026-11-27T00:00:00.000Z' }
-    autoshipStore(dir).saveTransaction(transaction)
-    const reopened = autoshipStore(dir)
-    for (const value of Object.values(transaction)) expect(reopened.pendingTransaction()).toContain(value)
+    const lock = deploymentLockPath(dir)
     const path = join(dir, 'self-change', 'autoship-transaction.json')
-    if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600)
+    mkdirSync(join(dir, 'self-change'))
+    writeFileSync(path, JSON.stringify(transaction))
+    const reopened = deploymentTransactions(lock, dir)
+    for (const value of Object.values(transaction)) expect(reopened.pending()?.message).toContain(value)
     writeFileSync(path, '{bad')
-    expect(reopened.pendingTransaction()).toContain('无法读取')
-    reopened.clearTransaction()
-    expect(reopened.pendingTransaction()).toBeNull()
+    expect(reopened.pending()?.message).toContain('无法读取')
+    reopened.confirm()
+    expect(reopened.pending()).toBeNull()
+    reopened.begin(transaction)
+    const journalPath = lock + '.transaction.json'
+    if (process.platform !== 'win32') expect(statSync(journalPath).mode & 0o777).toBe(0o600)
+    expect(deploymentTransactions(lock, join(dir, 'alternate-state')).pending()?.transaction).toEqual(transaction)
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
@@ -124,5 +131,22 @@ it('initializes an isolated hub, retries a missing remote quietly, and rejects a
     run(['update-ref', 'refs/heads/dev', 'HEAD'])
     expect(repo.fetchDev()).toBe(run(['rev-parse', 'HEAD']))
     expect(() => deps.repo(join(dir, 'other')).fetchDev()).toThrow(AutoshipPreparationError)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+it.each(['lock', 'lock.steal'])('leaves a dead self-change %s intact and reports the residue in status', async name => {
+  const dir = mkdtempSync(join(tmpdir(), 'cc-autoship-busy-'))
+  try {
+    patchAutoshipConfig(dir, { auto_ship: true })
+    const path = join(dir, 'self-change', name)
+    const body = JSON.stringify({ pid: 2_147_483_647, at: 1 })
+    writeFileSync(path, body)
+    const deps = defaultAutoshipDeps(dir, null, dir)
+    const safeDeps = { ...deps, platform: 'darwin' as const,
+      targetMismatch: vi.fn(() => { throw new Error('did not skip') }) }
+    expect(await runAutoshipCommand(safeDeps)).toMatchObject({ exitCode: 2, message: expect.stringContaining('自改锁残留') })
+    expect((await runAutoshipCommand(safeDeps, { status: true })).message).toContain('自改锁残留')
+    expect(readFileSync(path, 'utf8')).toBe(body)
+    expect(safeDeps.targetMismatch).not.toHaveBeenCalled()
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })

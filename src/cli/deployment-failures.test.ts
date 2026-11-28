@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
@@ -42,5 +42,20 @@ it('matches failed trees and Markdown-only variants from distinct clones, while 
     expect(matchesFailedTree(b.git, same, records)).toBe(true)
     expect(matchesFailedTree(b.git, markdown, records)).toBe(true)
     expect(matchesFailedTree(b.git, fixed, records)).toBe(false)
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
+it.each(['{broken', '{"failures":[{}]}'])('backs up a broken ledger verbatim before rebuilding it', body => {
+  const root = mkdtempSync(join(tmpdir(), 'cc-failed-ledger-'))
+  try {
+    const path = join(root, '.wechat-cc-deploy-failures.json')
+    writeFileSync(path, body)
+    const ledger = deploymentFailures(root)
+    expect(() => ledger.load()).toThrow()
+    const backup = ledger.repair()
+    expect(backup).toContain('.bad-')
+    expect(readFileSync(backup!, 'utf8')).toBe(body)
+    expect(ledger.load()).toEqual([])
+    expect(ledger.repair()).toBeNull()
   } finally { rmSync(root, { recursive: true, force: true }) }
 })

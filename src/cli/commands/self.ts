@@ -40,7 +40,7 @@ const selfDeployCmd = defineCommand({
       return
     }
 
-    const { acquireDeploymentLock, planSelfDeploy, executeSelfDeploy, defaultSelfDeployDeps, resolveSigningInputs, pluginSourceCandidates } = await import('../self-deploy.ts')
+    const { planSelfDeploy, executeSelfDeploy, defaultSelfDeployDeps, resolveSigningInputs, pluginSourceCandidates } = await import('../self-deploy.ts')
     const { homedir } = await import('node:os')
     const { existsSync, readFileSync } = await import('node:fs')
 
@@ -55,9 +55,10 @@ const selfDeployCmd = defineCommand({
 
     const repoRoot = compiledRepoRoot() ?? SOURCE_REPO_ROOT
     const homeDir = homedir()
+    const { acquireDeploymentLock, DEPLOYMENT_BUSY, deploymentLockPath, deploymentTransactions, sameDeploymentPath } = await import('../deployment-transaction')
     const held = acquireDeploymentLock(homeDir)
-    if ('heldBy' in held) {
-      const detail = `another self deploy is running (pid ${held.heldBy})`
+    if ('busy' in held) {
+      const detail = DEPLOYMENT_BUSY
       if (json) console.log(JSON.stringify({ ok: false, exitCode: 1, steps: [{ name: 'lock', ok: false, detail }] }))
       else console.error(detail)
       process.exitCode = 1
@@ -65,6 +66,14 @@ const selfDeployCmd = defineCommand({
     }
 
     try {
+      const pending = deploymentTransactions(deploymentLockPath(homeDir), STATE_DIR).pending()
+      if (pending && (!args.binary || !pending.transaction || !sameDeploymentPath(args.binary, pending.transaction.backupPath))) {
+        const step = { name: 'transaction', ok: false, detail: pending.message }
+        if (json) console.log(JSON.stringify({ ok: false, exitCode: 1, blocked: 'transaction', steps: [step] }))
+        else console.error(pending.message)
+        process.exitCode = 1
+        return
+      }
       const plistPath = join(homeDir, 'Library', 'LaunchAgents', 'com.wechat-cc.daemon.plist')
       const plistXml = existsSync(plistPath) ? readFileSync(plistPath, 'utf8') : null
       const uid = typeof process.getuid === 'function' ? process.getuid() : 501

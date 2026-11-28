@@ -1,7 +1,9 @@
-import { createHash } from 'node:crypto'
+import { copyFileSync, constants } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import z from 'zod'
-import { readJsonObject, writeJsonAtomic } from '../lib/json-file'
+import { writeJsonAtomic } from '../lib/json-file'
+import { readJsonFile } from '../lib/read-json-file'
 import type { Git } from './self-change/git'
 
 export const gitObjectId = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
@@ -29,11 +31,37 @@ export function matchesFailedTree(git: Git, candidate: string, records: z.infer<
   return records.some(r => r.content === content)
 }
 
+const ledgerShape = z.object({ failures: z.array(record).default([]) })
+
+export class DeploymentLedgerError extends Error {
+  constructor(err: unknown) {
+    super(`部署失败账不可用：${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
 export function deploymentFailures(homeDir: string) {
   const path = join(homeDir, '.wechat-cc-deploy-failures.json')
-  const load = () => z.array(record).parse(readJsonObject(path).failures ?? [])
+  const load = () => {
+    try { return ledgerShape.parse(readJsonFile(path)).failures }
+    catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return []
+      throw err
+    }
+  }
   return {
     load,
+    repair() {
+      try { load(); return null }
+      catch (err) {
+        if (!(err instanceof SyntaxError || err instanceof z.ZodError)) throw new DeploymentLedgerError(err)
+        const backup = `${path}.bad-${randomUUID()}`
+        try {
+          copyFileSync(path, backup, constants.COPYFILE_EXCL)
+          writeJsonAtomic(path, { failures: [] }, { mode: 0o600 })
+        } catch (repairError) { throw new DeploymentLedgerError(repairError) }
+        return backup
+      }
+    },
     // 所有写入都持部署事务锁。记录 SHA 供跨克隆排查，tree 用于比对构建内容。
     add(git: Git, sha: string, stage: string) {
       const tree = gitTree(git, sha)

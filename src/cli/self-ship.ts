@@ -53,7 +53,7 @@ export interface ShipOpts {
 
 export const SHIP_EXIT = { shipped: 0, deploy_failed: 1, selftest_red: 2, busy: 3, build_failed: 4, unguarded: 5, tree_unfit: 6 } as const
 
-export interface ShipResult { exitCode: number; message: string; version?: string; blocked?: SelfDeployResult['blocked'] }
+export interface ShipResult { exitCode: number; message: string; version?: string; blocked?: SelfDeployResult['blocked']; ledgerError?: string }
 
 export const DEFAULT_MAX_LOAD_PER_CPU = 1.0
 const LOAD_POLL_MS = 60_000
@@ -118,7 +118,7 @@ export async function runShip(deps: ShipDeps, opts: ShipOpts = {}): Promise<Ship
   deps.log('部署…')
   const d = await deps.deploy('deploy').catch(err => failedDeploy(err))
   if (d.blocked) {
-    return { exitCode: d.blocked === 'tasks' ? SHIP_EXIT.deploy_failed : SHIP_EXIT.tree_unfit, blocked: d.blocked, message: d.steps.map(s => s.detail).filter(Boolean).join('\n') }
+    return { exitCode: d.blocked === 'target' ? SHIP_EXIT.tree_unfit : SHIP_EXIT.deploy_failed, blocked: d.blocked, message: d.steps.map(s => s.detail).filter(Boolean).join('\n') }
   }
   if (!d.ok) {
     const steps = d.steps.filter(s => !s.ok).map(s => `- ${s.name}: ${s.detail ?? ''}`).join('\n')

@@ -66,7 +66,9 @@ export interface PipelineDeps {
   /** 开 PR / 等 CI 合 / 关 PR(forge.ts)。 */
   forge: Forge
   recordDeployFailure?: (sha: string, stage: 'deploy' | 'selftest') => void
-  lockDeployment?: () => { release(): void } | { heldBy: number }
+  lockDeployment?: () => { release(): void } | { busy: true }
+  pendingDeployment?: () => string | null
+  finishDeployment?: () => void
   deploy: (repoRoot: string) => Promise<SelfDeployResult>
   /** 收场时把这条运行的教训记下来(lessons.ts);不给 ⇒ 不记(测试缺省)。 */
   recordLessons?: (rows: LessonRow[]) => void
