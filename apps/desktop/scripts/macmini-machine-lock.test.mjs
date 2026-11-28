@@ -75,7 +75,7 @@ test('a late concurrent reclaimer cannot take the lock from the winner', () => f
           assertRunning: () => {
             if (++checks !== 4) return
             parentPort.postMessage('read stale owner')
-            if (Atomics.wait(state, 0, 0, 3000) === 'timed-out') throw Error('test barrier timed out')
+            if (Atomics.wait(state, 0, 0, 15000) === 'timed-out') throw Error('test barrier timed out')
           },
         })
         parentPort.postMessage('acquired')
@@ -85,9 +85,11 @@ test('a late concurrent reclaimer cannot take the lock from the winner', () => f
   `, { eval: true, workerData: { gate, path, module: new URL('./macmini-machine-lock.mjs', import.meta.url).href } })
   try {
     expect(await once(late, 'message')).toEqual(['read stale owner'])
+    // 先挂上听下一条:负载高时下面这次 acquire 可能比 worker 的等待还久,worker 超时发出的那条要是没人听就丢了,
+    // 这里会一直等到 20 秒超时(2026-11-28 合并队列里 macOS / Windows 同时这样红)。
+    const lateResult = once(late, 'message')
     const release = await acquireMachineLock({ ...options, isAlive: pid => pid === 42 })
     try {
-      const lateResult = once(late, 'message')
       Atomics.store(state, 0, 1)
       Atomics.notify(state, 0)
       expect(await lateResult).toEqual(['Machine lock queue timed out'])
