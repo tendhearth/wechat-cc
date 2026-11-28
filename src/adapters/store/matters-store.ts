@@ -74,7 +74,7 @@ export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore
     return require(id)
   }
   function list(filter:ListMatters={}):Matter[] {
-    const where:string[]=[],params:(string|number)[]=[]
+    const where=['id NOT IN (SELECT task_id FROM matter_plan_candidates WHERE task_id IS NOT NULL AND task_id<>matter_id)'],params:(string|number)[]=[]
     if(filter.kind){if(!KINDS.has(filter.kind))throw new Error('invalid_matter_kind');where.push('kind=?');params.push(filter.kind)}
     if(filter.legacy?.length){for(const s of filter.legacy)if(!LEGACY.has(s))throw new Error('invalid_matter_status');where.push(`legacy_status IN (${filter.legacy.map(()=>'?').join(',')})`);params.push(...filter.legacy)}
     if(filter.since!==undefined){where.push('updated_at>=?');params.push(filter.since)}

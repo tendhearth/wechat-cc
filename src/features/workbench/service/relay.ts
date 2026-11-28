@@ -10,6 +10,9 @@ import type {ServiceCtx} from './ctx'
 import type {AdmissionDomain} from './admission'
 import type {makeLedgerDomain} from './ledger'
 import type {RelayTurnHook,RelayResume} from './relay-events'
+import type {makeParallelDomain} from './parallel'
+import type {LifecycleDomain} from './lifecycle'
+import {RELAY_PLAN_TTL_MS} from '../../../domain/relay-decision'
 import {trackPreparation,type Active} from './state'
 
 const REASONS:Record<RelayStop,string>={
@@ -19,8 +22,9 @@ const REASONS:Record<RelayStop,string>={
   next_unavailable:'下一位执行者现在用不了，或状态尚未确认',next_already_tried:'下一棒已经自动派过一次',
 }
 
-export function makeRelayDomain(ctx:ServiceCtx,d:{admission:AdmissionDomain;ledger:ReturnType<typeof makeLedgerDomain>}){
+export function makeRelayDomain(ctx:ServiceCtx,d:{admission:AdmissionDomain;ledger:ReturnType<typeof makeLedgerDomain>;parallel:ReturnType<typeof makeParallelDomain>;lifecycle:LifecycleDomain}){
   const {store,state}=ctx,processing=new Set<string>()
+  const retryChoices=new Set<string>()
   function nextExecutor(executor:string,brief:string):RelayInput['nextExecutor']{
     try{d.admission.provider(executor)}catch{return {registered:false,blocked:'unavailable'}}
     // Optional legacy wiring is not evidence that these guards passed.
@@ -34,9 +38,14 @@ export function makeRelayDomain(ctx:ServiceCtx,d:{admission:AdmissionDomain;ledg
       return {registered:true,blocked:code==='provider_quota_exhausted'||code==='provider_rate_limited'?'quota':code==='unattended_ack_required'?'needs_confirmation':'unavailable'}
     }
   }
+  function availabilityFor(id:string,leg:PlanLeg){
+    const members=store.plans.candidates(id,leg.position)
+    return members.length?{registered:true,blocked:null}:nextExecutor(leg.executor,leg.brief)
+  }
   function say(id:string,text:string){
     const safe=redactSecrets(text.replace(/[\r\n]+/g,' '))
     store.addEvent(id,'system',safe)
+    ctx.hub.bumped(id)
     ctx.deps.reports?.enqueueRelay?.(id,safe)
   }
   function matterState(id:string,running?:Active,ownerInputQueued=false):RelayInput['matter']{
@@ -65,22 +74,66 @@ export function makeRelayDomain(ctx:ServiceCtx,d:{admission:AdmissionDomain;ledg
     running.relayReportedTurn=running.turnSeq
     say(id,reason==='leg_asked'?`第 ${current.position} 棒（${providerDisplayName(current.executor)}）在等你回话，你回了它接着做。`:`停在第 ${current.position} 棒（${providerDisplayName(current.executor)}）：${REASONS[reason]}；说「继续」让它接着做。`)
   }
-  function hold(id:string,current:PlanLeg|undefined,next:PlanLeg,reason:RelayStop,availability:RelayInput['nextExecutor'],running?:Active){
+  function hold(id:string,current:PlanLeg|undefined,next:PlanLeg,reason:RelayStop,availability:RelayInput['nextExecutor'],running?:Active,automaticChoice=false){
+    if(automaticChoice&&next.stopReason===reason)return
     store.atomic(()=>{store.plans.hold(id,current?.position??null,next.position,reason);store.bump(id)})
     if(running)running.relayReportedTurn=running.turnSeq
     const finished=current?`第 ${current.position} 棒（${providerDisplayName(current.executor)}）做完了，`:''
     say(id,`${finished}第 ${next.position} 棒（${providerDisplayName(next.executor)}）没派出去：${reason==='next_unavailable'?unavailableReason(availability):REASONS[reason]}。好了之后说「继续」。`)
   }
-  async function dispatch(id:string,current:PlanLeg|undefined,leg:PlanLeg,ownerResume:boolean,running?:Active){
-    let accepted=false,availability=nextExecutor(leg.executor,leg.brief)
+  async function prepareGroup(taskId:string,running?:Active){
+    const prior=state.runsByTask.get(taskId)
+    if(prior){
+      if(!d.lifecycle.quiet(prior)||prior.finishing||prior.uncertain||prior.cancelled)throw Error('workbench_busy')
+      prior.relayClosing=true
+      await d.lifecycle.cancel(taskId,prior.identity)
+      await prior.done
+    }
+    ctx.ensureAccepting()
+    const matter=matterState(taskId,running)
+    if(matter.archived||matter.writerNotClosed||matter.worktreeRemoved||matter.rewindBlocked||matter.ownerInputQueued||state.runsByTask.has(taskId))throw Error('workbench_busy')
+    return d.parallel.forkStart(taskId)
+  }
+  function groupNeedsAttention(id:string,position:number,remind=false){
+    const missing=store.plans.candidates(id,position).filter(member=>!member.taskId)
+    if(!missing.length)return
+    const names=missing.map(member=>providerDisplayName(member.executor)).join('、')
+    const message=`第 ${position} 棒需要你看一眼。${names} 还没开工。发送「任务 ${id} 继续」让这几位开工。`
+    const saved=store.atomic(()=>{
+      if(!store.plans.markGroupNeedsAttention(id,position)&&!remind)return false
+      store.addEvent(id,'system',message)
+      return true
+    })
+    if(saved){
+      ctx.hub.bumped(id)
+      ctx.deps.reports?.enqueueRelay?.(id,message)
+    }
+  }
+  async function dispatch(id:string,current:PlanLeg|undefined,leg:PlanLeg,ownerResume:boolean,running?:Active,automaticChoice=false){
+    let accepted=false,availability=availabilityFor(id,leg)
+    const taskId=store.plans.activeTask(id,leg.position)
     processing.add(id)
     try{
-      await d.ledger.matterHandoff(id,leg.executor,leg.brief,{from:current?.position??null,to:leg.position,ownerResume,accepted:()=>{accepted=true},beforeStart:()=>{
-        availability=nextExecutor(leg.executor,leg.brief)
+      const members=store.plans.candidates(id,leg.position)
+      if(members.length){
+        const {target,start}=await prepareGroup(taskId,running)
+        ctx.ensureAccepting()
+        const chosen=current&&store.plans.candidateForTask(taskId)
+        if(chosen?.chosen&&chosen.position===current?.position&&chosen.result?.snapshot)start.sha=chosen.result.snapshot
+        store.atomic(()=>{store.plans.openGroup(id,current?.position??null,leg.position,ownerResume);store.bump(id)})
+        accepted=true
+        retryChoices.delete(id)
+        say(id,`第 ${leg.position} 棒开始并行，各做一版。`)
+        await d.parallel.launch(id,leg.position,target,start)
+        if(!state.stopping&&store.plans.hasDispatchIntent(id,leg.position-1))groupNeedsAttention(id,leg.position)
+        return
+      }
+      await d.ledger.matterHandoff(taskId,leg.executor,leg.brief,{from:current?.position??null,to:leg.position,ownerResume,accepted:()=>{accepted=true;retryChoices.delete(id)},beforeStart:()=>{
+        availability=availabilityFor(id,leg)
         if(!availability.registered||availability.blocked!==null)throw Error('unavailable_provider')
-        const matter=matterState(id,running)
+        const matter=matterState(taskId,running)
         if(matter.archived||matter.writerNotClosed||matter.worktreeRemoved||matter.rewindBlocked||matter.ownerInputQueued)throw Error('workbench_busy')
-        if(ctx.deps.executionConflict?.(store.get(id).path,leg.executor,null))throw Error('native_session_busy')
+        if(ctx.deps.executionConflict?.(store.get(taskId).path,leg.executor,null))throw Error('native_session_busy')
       }})
       say(id,`${current?`${providerDisplayName(current.executor)} 做完了，`:''}${providerDisplayName(leg.executor)} 接着做第 ${leg.position} 棒。`)
     }catch(error){
@@ -90,29 +143,60 @@ export function makeRelayDomain(ctx:ServiceCtx,d:{admission:AdmissionDomain;ledg
       const reason:RelayStop=['next_unavailable','unavailable_provider','unattended_ack_required','provider_quota_exhausted','provider_rate_limited'].includes(code)?'next_unavailable':'matter_blocked'
       // An accepted/queued run counts as started, even before provider.spawn is called.
       if(!accepted&&plan.legs.find(l=>l.position===leg.position)?.state==='pending'){
-        availability=nextExecutor(leg.executor,leg.brief)
+        availability=availabilityFor(id,leg)
         if(code==='provider_quota_exhausted'||code==='provider_rate_limited')availability={registered:true,blocked:'quota'}
         else if(code==='unattended_ack_required')availability={registered:true,blocked:'needs_confirmation'}
-        hold(id,current,leg,reason,availability,running)
+        hold(id,current,leg,reason,availability,running,automaticChoice)
+        if(code==='matter_parallel_uncommitted'&&(!automaticChoice||leg.stopReason!==reason))say(id,`请先提交上一棒的工作区（任务 ${taskId}），再说「继续」。`)
       }else if(current&&running)stopCurrent(id,current,reason,running)
       else ctx.log?.('MATTER_RELAY',`${id}: accepted handoff failed: ${code}`)
     }finally{processing.delete(id)}
   }
-  const resume:RelayResume=(id,accept)=>{
+  async function resumeGroup(id:string,leg:PlanLeg,taskId:string){
+    processing.add(id)
+    try{
+      const {target,start}=await prepareGroup(taskId)
+      const accepted=store.plans.candidates(id,leg.position).find(member=>member.taskId)
+      const frozen=accepted?.taskId?store.worktrees.get(accepted.taskId)?.start:null
+      const sha=frozen?.sha??store.plans.candidateForTask(taskId)?.result?.snapshot
+      if(!sha)throw Error('matter_parallel_not_ready')
+      await d.parallel.launch(id,leg.position,target,frozen??{...start,sha})
+    }catch(error){ctx.log?.('MATTER_PARALLEL',`${id}/${leg.position}: manual launch: ${String(error)}`)}
+    finally{processing.delete(id)}
+    if(!state.stopping&&store.plans.hasDispatchIntent(id,leg.position-1))groupNeedsAttention(id,leg.position,true)
+  }
+  function resumePending(id:string,accept:()=>void,ownerResume:boolean):boolean{
+    const requestedTask=id
+    id=store.plans.root(id)
     const plan=store.plans.get(id)
-    if(plan?.state!=='approved'||plan.legs.some(l=>l.state==='running'||l.state==='stopped'))return false
+    if(plan?.state!=='approved')return false
+    const active=plan.legs.find(l=>l.state==='running'||l.state==='stopped')
+    const restartGroup=ownerResume&&active?.state==='running'&&active.stopReason==='leg_interrupted'
+      &&store.plans.candidateForTask(requestedTask)?.position!==active.position
+      &&store.plans.hasDispatchIntent(id,active.position-1)
+    if(active&&!restartGroup)return false
     ctx.ensureAccepting()
     if(processing.has(id))throw Error('workbench_busy')
     const task=store.get(id),owner=ctx.deps.ownerChatId()
     if(!owner||task.ownerChatId!==owner||store.taskMatterId(id)!==id)throw Error('matter_ledger_forbidden')
+    if(restartGroup){
+      if(task.archivedAt!==null)throw Error('workbench_archived')
+      const taskId=store.plans.activeTask(id,active.position)
+      accept()
+      void trackPreparation(state,resumeGroup(id,active,taskId)).catch(error=>ctx.log?.('MATTER_RELAY',`${id}: resume failed: ${String(error)}`))
+      return true
+    }
     const next=plan.legs.find(l=>l.state==='pending'),current=plan.legs.filter(l=>l.position<(next?.position??Infinity)&&l.state==='completed').at(-1)
-    const running=state.runsByTask.get(id),availability=next?nextExecutor(next.executor,next.brief):{registered:false,blocked:'unavailable' as const}
-    const decision=decideResume({plan,matter:matterState(id,running),nextExecutor:availability})
+    const taskId=store.plans.activeTask(id,next?.position)
+    const running=state.runsByTask.get(taskId),availability=next?availabilityFor(id,next):{registered:false,blocked:'unavailable' as const}
+    const decision=!ownerResume&&ctx.now()-plan.approvedAt>RELAY_PLAN_TTL_MS
+      ? {action:'stop' as const,reason:'plan_stale' as const}
+      : decideResume({plan,matter:matterState(taskId,running),nextExecutor:availability})
     accept() // Durable command receipt; never enqueue this command to the completed executor.
-    if(decision.action==='dispatch')void trackPreparation(state,dispatch(id,current,next!,true,running)).catch(error=>ctx.log?.('MATTER_RELAY',`${id}: resume failed: ${error instanceof Error?error.message:String(error)}`))
+    if(decision.action==='dispatch')void trackPreparation(state,dispatch(id,current,next!,true,running,!ownerResume)).catch(error=>ctx.log?.('MATTER_RELAY',`${id}: resume failed: ${error instanceof Error?error.message:String(error)}`))
     else if(decision.action==='stop'){
-      if(!diagnostic(id,decision.reason)&&next)hold(id,current,next,decision.reason,availability,running)
-    }else if(decision.action==='wait')say(id,'你之前的补充还在等处理，接力先等一下。')
+      if(!diagnostic(id,decision.reason)&&next)hold(id,current,next,decision.reason,availability,running,!ownerResume)
+    }else if(decision.action==='wait'&&ownerResume)say(id,'你之前的补充还在等处理，接力先等一下。')
     else if(decision.action==='done'){
       store.atomic(()=>{store.plans.done(id);store.bump(id)})
       if(running)running.relayReportedTurn=running.turnSeq
@@ -120,22 +204,64 @@ export function makeRelayDomain(ctx:ServiceCtx,d:{admission:AdmissionDomain;ledg
     }
     return true
   }
+  const resume:RelayResume=(id,accept)=>resumePending(id,accept,true)
+  function tryChoice(id:string){
+    try{resumePending(id,()=>{},false)}
+    catch(error){ctx.log?.('MATTER_RELAY',`${id}: choice dispatch deferred: ${String(error)}`)}
+  }
+  function afterChoice(id:string,position:number){
+    try{
+      if(!store.plans.hasDispatchIntent(id,position))return
+      retryChoices.add(id)
+      tryChoice(id)
+    }catch(error){ctx.log?.('MATTER_RELAY',`${id}: choice dispatch deferred: ${String(error)}`)}
+  }
+  function readIntents(){
+    const owner=ctx.deps.ownerChatId()
+    return owner?store.plans.dispatchIntents(owner):[]
+  }
+  function recoverChoices(){
+    const pending=readIntents()
+    if(pending.length)queueMicrotask(()=>{
+      if(state.stopping)return
+      for(const {matterId} of pending){
+        try{
+          const active=store.plans.get(matterId)?.legs.find(leg=>leg.state==='running')
+          if(active)groupNeedsAttention(matterId,active.position)
+          else{retryChoices.add(matterId);tryChoice(matterId)}
+        }catch(error){ctx.log?.('MATTER_RELAY',`${matterId}: startup dispatch check: ${String(error)}`)}
+      }
+    })
+  }
+  function retryPendingChoices(){
+    if(state.stopping||!retryChoices.size)return
+    try{
+      const pending=new Set(readIntents().map(intent=>intent.matterId))
+      for(const id of retryChoices){
+        if(pending.has(id))tryChoice(id)
+        else retryChoices.delete(id)
+      }
+    }catch(error){ctx.log?.('MATTER_RELAY',`choice dispatch check: ${String(error)}`)}
+  }
   const afterTurn:RelayTurnHook=async(running,status,pendingQuestion,ownerInputQueued)=>{
-    const id=running.taskId
-    if(running.relayClosing||processing.has(id))return
+    const taskId=running.taskId,id=store.plans.root(taskId)
+    if(running.relayClosing)return
+    if(d.parallel.afterTurn(running,status,pendingQuestion,!!ownerInputQueued))return
+    if(processing.has(id))return
     const plan=store.plans.get(id)
     if(plan?.state!=='approved')return
+    if(taskId!==id){store.bump(id);ctx.hub.bumped(id)}
     const current=plan.legs.find(l=>l.state==='running')
     if(!current)return
     const baton=running.ledgerRunId??running.identity
     if(state.stopping){store.atomic(()=>{store.plans.stop(id,current.position,'leg_interrupted');store.bump(id)});return}
     const task=store.get(id)
-    const reply=store.steps(id).filter(s=>timelineKind(s)==='text'&&stepPayload(s).runId===running.identity&&s.turnId===running.turn?.id).at(-1)
+    const reply=store.steps(taskId).filter(s=>timelineKind(s)==='text'&&stepPayload(s).runId===running.identity&&s.turnId===running.turn?.id).at(-1)
     const next=plan.legs.find(l=>l.position>current.position)
     const input:RelayInput={now:ctx.now(),plan,
       finished:{position:current.runId===baton?current.position:null,status:running.cancelled&&!running.relayClosing?'cancelled':['completed','failed','cancelled','interrupted'].includes(status)?status as RelayInput['finished']['status']:'interrupted',uncertain:running.uncertain,pendingQuestion,finalText:reply?stepPayload(reply).text:''},
-      matter:matterState(id,running,ownerInputQueued),
-      nextExecutor:next?nextExecutor(next.executor,next.brief):{registered:false,blocked:'unavailable'},
+      matter:matterState(taskId,running,ownerInputQueued),
+      nextExecutor:next?availabilityFor(id,next):{registered:false,blocked:'unavailable'},
     }
     const decision=decideRelay(input)
     if(decision.action==='wait')return
@@ -162,5 +288,5 @@ export function makeRelayDomain(ctx:ServiceCtx,d:{admission:AdmissionDomain;ledg
       ?? plan.legs.filter(l=>l.state==='completed').at(-1) ?? plan.legs[0]!
     return {index:current.position,total:plan.legs.length,currentAgent:current.executor}
   }
-  return {afterTurn,resume,rosterRelay}
+  return {afterTurn,afterChoice,recoverChoices,retryPendingChoices,resume,rosterRelay}
 }

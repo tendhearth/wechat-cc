@@ -13,6 +13,7 @@ import {seedLedger} from './ledger-completion'
 import {checkedText} from './checked-text'
 import type {EntryDomain} from './entry'
 import type {makeViewDomain} from './view'
+import type {makeParallelDomain} from './parallel'
 import {matterApprovals} from './matter-approvals'
 import {MatterPlanRequest} from '../../../../packages/protocol/src/desktop-api'
 import {resolvePlanTarget,resolvePlanLegs,PlanInputError,planRequestId,type PlanLegs,type PlanConversation,type PlanCaller,type MatterPlanInput} from '../../../adapters/workbench/matter-plan-input'
@@ -24,7 +25,7 @@ export class RegisteredProjectDispatchError extends Error {
   constructor(cause:unknown){super(cause instanceof Error?cause.message:'',{cause})}
 }
 
-export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecycle:LifecycleDomain;admission:AdmissionDomain;entry:EntryDomain;view:ReturnType<typeof makeViewDomain>}){
+export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecycle:LifecycleDomain;admission:AdmissionDomain;entry:EntryDomain;parallel:ReturnType<typeof makeParallelDomain>;view:ReturnType<typeof makeViewDomain>}){
   const {store,state}=ctx,inFlight=new Set<string>()
   const approvals=matterApprovals()
   const scopes=new Map<string,string>()
@@ -41,7 +42,7 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
   const planPlaces=()=>ctx.deps.planPlaces?.()??[]
   const planProjects=()=>d.view.projects(true)
   const requestIdFor=(owner:string,scope:string,plan:Parameters<typeof planRequestId>[1]&{requestId?:string})=>
-    plan.requestId??planRequestId(JSON.stringify([owner,scope]),plan)
+    (plan.legs.some(leg=>'parallel' in leg&&leg.parallel)?undefined:plan.requestId)??planRequestId(JSON.stringify([owner,scope]),plan)
   function prepare(input:MatterPlanInput,context?:PlanConversation,preview=false){
     const parsed=MatterPlanRequest.safeParse(input)
     if(!parsed.success)throw Error('invalid_matter_plan')
@@ -49,7 +50,7 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
     const bound=context&&approvals.get(context.scope,'mcp__wechat__matter_plan',normalized)
     const prior=normalized.requestId&&store.entryRequests.get(ctx.deps.ownerChatId()??'',normalized.requestId.toLowerCase())
     const first=normalized.legs[0]
-    const replayLegs=prior&&prior.phase==='accepted'&&normalized.legs.length===1&&first&&first.executor===undefined
+    const replayLegs:PlanLegs|undefined=prior&&prior.phase==='accepted'&&normalized.legs.length===1&&first&&!('parallel' in first)&&first.executor===undefined
       ? [{executor:prior.providerId,brief:first.brief}]
       : undefined
     if(bound?.target&&(preview||bound.approved))return {...normalized,...bound.target,legs:bound.target.registrationPath?bound.target.legs:replayLegs??bound.target.legs}
@@ -63,7 +64,7 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
   }
   function requirePlanLegs(legs:PlanLegs){
     try{
-      for(const leg of legs)d.admission.requireEntryInput(leg.executor,[],PROVIDER_EXECUTION_CHOICE,leg.brief)
+      for(const leg of legs)for(const executor of leg.parallel??[leg.executor])d.admission.requireEntryInput(executor,[],PROVIDER_EXECUTION_CHOICE,leg.brief)
     }catch(error){
       if(error instanceof Error&&error.message==='unavailable_provider')throw new PlanInputError(error.message,undefined,d.entry.availableExecutors())
       throw error
@@ -90,16 +91,17 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
     matterApprovalStatus(tool:string,input:unknown,caller:PlanCaller){const context=conversation(caller);return !!context&&approvals.get(context.scope,tool,input)?.approved===true},
     async matterContext(key:string|undefined,requested?:string){
       if(key?.startsWith('terminal-participation/'))throw Error('matter_ledger_forbidden')
-      const id=store.ledger.bound(key,requested),task=store.get(id)
+      const id=store.ledger.bound(key,requested),task=store.get(key!.slice('workbench/'.length))
       if(!store.ledger.enabled(id))throw Error('matter_ledger_forbidden')
       const text=store.events(id).filter(e=>e.kind==='user').at(-1)?.text??''
       const context=await readTopicBrief(ctx.deps.topicBrief,task,text)
       return {context:context??'',...(!context?{message:'没有相关话题'}:{})}
     },
     matterNotes(key:string|undefined,requested?:string,q?:MatterNotesQuery){
-      const page=store.ledger.page(store.ledger.bound(key,requested),q)
+      const id=store.ledger.bound(key,requested)
+      const runId=key?.startsWith('workbench/')?state.runsByTask.get(key.slice('workbench/'.length))?.ledgerRunId:undefined
       if(key?.startsWith('terminal-participation/'))store.ledger.terminals.connected(key)
-      return page
+      return store.ledger.page(id,q,{runId})
     },
     matterNote(key:string|undefined,text:string){
       if(key?.startsWith('terminal-participation/')){
@@ -110,7 +112,7 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
         store.ledger.terminals.touch(p.matterId)
         return {ok:true as const}
       }
-      const id=store.ledger.bound(key),run=state.runsByTask.get(id)
+      const id=store.ledger.bound(key),run=state.runsByTask.get(key?.slice('workbench/'.length)??'')
       if(!store.ledger.enabled(id)||!run||run.cancelled||run.finishing||run.uncertain)throw Error('matter_session_ended')
       if(typeof text!=='string'||!text.trim()||text.length>1000)throw Error('invalid_matter_note')
       store.atomic(()=>{store.ledger.note(id,run.ledgerRunId??run.identity,run.task.providerId,text,run.turn?.id);store.bump(id)})
@@ -132,13 +134,23 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
       // Accepted receipts replay before mutable provider admission; createEntry still checks the complete hash.
       const entryContext={ownerKey:owner,surface:'desktop' as const}
       const accepted=d.entry.entryReceipt(requestId,entryContext)
-      if(!accepted)requirePlanLegs(legs)
-      const first=prepared.legs[0]!
+      const first=legs[0]!
+      const parallel=legs.some(leg=>leg.parallel)
+      if(parallel&&!accepted&&(!context||!approvals.get(context.scope,'mcp__wechat__matter_plan',input)?.approved))throw Error('matter_parallel_requires_approval')
+      if(!parallel&&!accepted)requirePlanLegs(legs)
+      const firstAdmitted=()=>{
+        for(const executor of first.parallel??[first.executor]){
+          try{requirePlanLegs([{executor,brief:first.brief}]);return executor}
+          catch(error){if(!first.parallel||executor===first.parallel.at(-1))throw error}
+        }
+        throw Error('unavailable_provider')
+      }
+      const firstExecutor=store.entryRequests.get(owner,requestId)?.providerId??(parallel?firstAdmitted():first.executor)
       const target=prepared.target
       let projectRegistered=false
       if(!accepted&&registrationPath&&target.kind==='project'){
         ctx.ensureAccepting()
-        const project={path:prepared.projectPath,name:prepared.projectName,providerId:first.executor}
+        const project={path:prepared.projectPath,name:prepared.projectName,providerId:firstExecutor}
         if(projectRegistrationId(owner,project.path)!==target.projectId){
           if(context)approvals.consume(context.scope,'mcp__wechat__matter_plan',input)
           throw Error('matter_place_changed')
@@ -150,15 +162,20 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
         }
       }
       try{
-        return await d.entry.createEntry({requestId,target,title:prepared.title,text:first.brief,providerId:first.executor},entryContext,
+        const result=await d.entry.createEntry({requestId,target,title:prepared.title,text:first.brief,providerId:firstExecutor},entryContext,
           {identity:JSON.stringify(legs),persist:(task,runId)=>{
             if(ctx.deps.ownerChatId()!==owner)throw Error('matter_ledger_forbidden')
             // A single executor is an ordinary chat delegation, without a relay ledger or plan.
-            if(legs.length===1)return
-            store.ledger.start(task.id,runId,first.executor,first.brief)
-            store.plans.approve(task.id,legs,runId)
+            if(legs.length===1&&!first.parallel)return
+            store.ledger.start(task.id,runId,firstExecutor,first.brief)
+            store.plans.approve(task.id,legs,runId,firstExecutor)
             store.ledger.plan(task.id,legs)
           }})
+        if(first.parallel){
+          const start=store.worktrees.get(result.receipt.taskId)?.start
+          if(start)await d.parallel.launch(result.receipt.matterId,1,target,start)
+        }
+        return result
       }catch(error){
         if(projectRegistered)throw new RegisteredProjectDispatchError(error)
         throw error
@@ -173,7 +190,7 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
         const check=()=>{
           const task=store.get(id)
           if(!owner||ctx.deps.ownerChatId()!==owner||task.ownerChatId!==owner||store.taskMatterId(id)!==id)throw Error('matter_ledger_forbidden')
-          if(task.archivedAt!==null)throw Error('workbench_archived')
+          if(task.archivedAt!==null||store.get(store.plans.root(id)).archivedAt!==null)throw Error('workbench_archived')
           if(task.error==='writer_not_closed')throw Error('writer_not_closed')
           if(store.worktrees.get(id)?.removedAt!=null)throw Error('worktree_removed')
           if(store.source(id)?.firstDispatchedAt===null)throw Error('external_close_confirmation_required')
@@ -202,12 +219,14 @@ export function makeLedgerDomain(ctx:ServiceCtx,d:{execute:ExecuteDomain;lifecyc
           automatic?.beforeStart()
           if(!store.ledger.enabled(id))seedLedger(ctx,task,prior)
           store.switchExecutor(id,executor)
-          if(!automatic)planCancelled=store.plans.cancel(id)
-          return d.execute.start(store.get(id),text,identity,{mode:'new'},undefined,undefined,undefined,undefined,[],undefined,PROVIDER_EXECUTION_CHOICE,{ledgerOpening:true,persist:runId=>{if(automatic)store.plans.advance(id,automatic.from,automatic.to,runId,automatic.ownerResume)},activate:fn=>{activate=fn}})
+          if(!automatic)planCancelled=store.plans.cancel(store.plans.root(id))
+          return d.execute.start(store.get(id),text,identity,{mode:'new'},undefined,undefined,undefined,undefined,[],undefined,PROVIDER_EXECUTION_CHOICE,{ledgerOpening:true,persist:runId=>{if(automatic)store.plans.advance(store.plans.root(id),automatic.from,automatic.to,runId,automatic.ownerResume)},activate:fn=>{activate=fn}})
         })
         // Once accepted, even a queued run must never be recorded as an unstarted pending leg.
         automatic?.accepted?.()
         activate?.()
+        const root=store.plans.root(id)
+        if(root!==id){store.bump(root);ctx.hub.bumped(root)}
         return {...view,...publicTask(store.get(id)),...(planCancelled?{planCancelled:true,notice:'拆法已作废'}:{})}
       }finally{inFlight.delete(id)}
     },

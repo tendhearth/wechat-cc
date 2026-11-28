@@ -235,6 +235,11 @@ export async function runReportSweep(deps: ReportSweepDeps): Promise<ReportSweep
       result.deferred++
       continue
     }
+    if (rec.comparison && !deps.store.comparisonCurrent(rec.id)) {
+      await deps.store.markDropped(rec.id)
+      result.dropped++
+      continue
+    }
     sendAttempts++
     if (forcedRelease) {
       heldOverrideCount++

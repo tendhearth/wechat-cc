@@ -138,8 +138,29 @@ let topicJudgeAttempts=0,topicRoundDispatches=0
 const claudeApprovalTitle = '沙盒 Claude 命令附加参数'
 const claudeApprovalDescription = 'sandboxapprovaldescriptionfixture'
 let claudeApprovalDispatched = false
+const parallelTitle='沙盒：两个执行者各做一版'
+const parallelPrompt='沙盒并行新建版本'
+const parallelBrief='各自在沙盒里写你的版本文件'
+const parallelNext='核验沙盒选中的版本文件'
+let sandboxOwnerSession=''
+let parallelPlanStatus=0
+function parallelFakeWorktree(executor:string):string{
+  const row=d.query<{path:string}>(`SELECT t.path FROM workbench_tasks t JOIN matter_plan_candidates c ON c.task_id=t.id
+    WHERE t.title=? AND c.executor=?`,parallelTitle,executor)[0]
+  if(!row)throw Error('parallel fixture has no workspace')
+  return row.path
+}
+function writeParallelCandidate(executor:string){
+  const cwd=parallelFakeWorktree(executor)
+  writeFileSync(join(cwd,`parallel-${executor}.txt`),`${executor} candidate\n`)
+  const inWorkspace=(...args:string[])=>execFileSync('git',['-c','user.email=sandbox@example.invalid','-c','user.name=sandbox',...args],{cwd,stdio:'pipe'})
+  inWorkspace('add',`parallel-${executor}.txt`)
+  inWorkspace('commit','-qm',`${executor} candidate`)
+  return {toolCalls:[],finalText:'实际完成的验证：版本文件存在\n状态：做完'}
+}
 const claudeScript: FakeSdkScript = { async onDispatch(text) {
   captureApprovalFollowUp(text)
+  if(text.includes(`本轮要求：\n${parallelBrief}`))return writeParallelCandidate('claude')
   if (text.includes('快判沙盒配色')) topicRoundDispatches++
   if (!claudeApprovalDispatched && text.includes(claudeApprovalTitle) && !text.includes('<wechat ')) {
     claudeApprovalDispatched = true
@@ -169,6 +190,28 @@ const codexScript: FakeSdkScript = {
     captureApprovalFollowUp(text)
     lastCodexEnvelope = text
     const s = said(text)
+    if(s===parallelPrompt){
+      const input={title:parallelTitle,project:'parallel-sandbox',legs:[{parallel:['codex','claude'],brief:parallelBrief},{executor:'codex',brief:parallelNext}]}
+      return {toolCalls:[],finalText:'并行交办已确认。',codexSteps:[
+        {notify:{method:'item/started',params:{item:{id:'sandbox-parallel-plan',type:'mcpToolCall',status:'inProgress',server:'wechat',tool:'matter_plan',arguments:input}}}},
+        {request:{method:'mcpServer/elicitation/request',params:{
+          serverName:'wechat',mode:'form',message:'审阅并行计划',requestedSchema:{type:'object',properties:{}},
+          _meta:{codex_approval_kind:'mcp_tool_call',tool_name:'matter_plan',tool_params:input},
+        }},async onResponse(response){
+          if((response.result as {action?:string}|undefined)?.action!=='accept')return
+          const {baseUrl}=readApiInfo(d.stateDir)!
+          const posted=await fetch(baseUrl+'/v1/matter/plan',{method:'POST',headers:{authorization:`Bearer ${sandboxOwnerSession}`,'content-type':'application/json'},body:JSON.stringify(input)})
+          parallelPlanStatus=posted.status
+          await posted.text()
+        }},
+      ]}
+    }
+    if(text.includes(`本轮要求：\n${parallelBrief}`))return writeParallelCandidate('codex')
+    if(text.includes(`本轮要求：\n${parallelNext}`)){
+      const chosen=parallelFakeWorktree('claude')
+      return {toolCalls:[],finalText:text.includes(chosen)&&existsSync(join(chosen,'parallel-claude.txt'))
+        ? '已在选中版本的工作区核验。\n状态：做完' : '找不到选中的版本。\n状态：没做完'}
+    }
     if (s === '把 build 删了') return approval('rm -rf build', '删好了。')
     if (s === '在本轮目录把 build 删了') return approval(scopedApprovalCommand, '删好了。', null)
     if (s === '列一下目录') return approval('ls', '列好了。')
@@ -193,6 +236,10 @@ const codexScript: FakeSdkScript = {
 }
 const boot = (more: Pick<RealShapedOpts, 'terminalTranscriptRoots' | 'stateDir' | 'agentConfigPatch' | 'speechFlushIntervalMs' | 'scheduledJobsIntervalMs' | 'reminderIntervalMs' | 'machineIdleS' | 'escalateAfterMs' | 'recordSessionAuth'> = {}) => startRealShapedDaemon({
   ...more,
+  recordSessionAuth:auth=>{
+    if(auth.sessionKey.startsWith('codex/')&&auth.sessionKey.endsWith('/'+SANDBOX_OWNER))sandboxOwnerSession=auth.token
+    more.recordSessionAuth?.(auth)
+  },
   claudeScript, codexScript,
   // 只替身模型边界:让手动睡眠走正常成功路径,不发真实模型请求。
   moderatorScript: { onEval: async (prompt) => {
@@ -611,6 +658,45 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const review = await desktop<{ reviews: Array<{ files?: Array<{ path: string }> }> }>('GET', `/v1/workbench/review?id=${taskId}`)
     expect(review.status).toBe(200)
     expect(review.body.reviews.flatMap(r => r.files ?? []).map(f => f.path)).toContain('NOTE.md')
+  })
+
+  it.skipIf(process.platform==='win32')('compares two independently executed versions, merges the owner choice and resumes the approved relay',async({onTestFinished})=>{
+    const repo=realpathSync(mkdtempSync(join(homedir(),'wechat-cc-sandbox-parallel-')))
+    onTestFinished(()=>removeTempDir(repo))
+    const inRepo=(...args:string[])=>execFileSync('git',['-c','user.email=sandbox@example.invalid','-c','user.name=sandbox',...args],{cwd:repo,stdio:'pipe'})
+    inRepo('init','-q','-b','main')
+    writeFileSync(join(repo,'README.md'),'parallel sandbox\n')
+    inRepo('add','.');inRepo('commit','-qm','baseline')
+    expect((await desktop('POST','/v1/workbench/project',{path:repo,name:'parallel-sandbox',providerId:'codex'})).status).toBe(200)
+    d.sendText(d.owner,parallelPrompt)
+    type Pending={items:{hash:string;prompt:string}[]}
+    const pending=async()=> (await desktop<Pending>('GET','/v1/permissions/pending')).body.items.find(card=>card.prompt.includes(parallelTitle))
+    await expect.poll(pending,{timeout:15_000}).toMatchObject({prompt:expect.stringContaining('并行 2 位')})
+    expect((await desktop('POST','/v1/permissions/resolve',{hash:(await pending())!.hash,decision:'allow'})).status).toBe(200)
+    await expect.poll(()=>parallelPlanStatus,{timeout:20_000}).toBe(202)
+    const id=d.query<{id:string}>('SELECT id FROM workbench_tasks WHERE title=? AND id IN (SELECT matter_id FROM matter_plans)',parallelTitle)[0]!.id
+    const outbox=()=>d.query<{text:string}>('SELECT text FROM matter_report_outbox WHERE matter_id=?',id).find(row=>row.text.includes('并行对照'))?.text
+    await expect.poll(outbox,{timeout:30_000}).toContain('parallel-claude.txt')
+    expect(outbox()).toContain('parallel-codex.txt')
+    expect(outbox()).toContain('+1 / −0 行')
+    const detail=MatterDetail.parse((await desktop('GET',`/v1/matter?id=${id}`)).body)
+    const outcomes=d.query<{executor:string;error:string|null;result:string|null}>(`SELECT c.executor,t.error,c.result
+      FROM matter_plan_candidates c LEFT JOIN workbench_tasks t ON t.id=c.task_id WHERE c.matter_id=? ORDER BY c.ordinal`,id)
+    const replies=d.query(`SELECT c.executor,i.turn_id AS turn,json_extract(i.payload_json,'$.text') AS text
+      FROM matter_plan_candidates c JOIN matter_items i ON i.matter_id=c.task_id AND i.kind='agent_message' WHERE c.matter_id=?`,id)
+    expect(detail.parallelGroups?.[0]?.members.map(m=>m.status),JSON.stringify({outcomes,replies})).toEqual(['completed','completed'])
+    expect(existsSync(join(repo,'parallel-claude.txt'))).toBe(false)
+    expect(d.query<{state:string}>('SELECT state FROM matter_plan_legs WHERE matter_id=? AND position=2',id)[0]?.state).toBe('pending')
+    const chosen=detail.parallelGroups![0]!.members.find(member=>member.executor==='claude')!
+    d.sendText(d.owner,`用 Claude 那版 任务 ${chosen.taskId}`)
+    await expect.poll(()=>d.query<{state:string}>('SELECT state FROM matter_plans WHERE matter_id=?',id)[0]?.state,{timeout:30_000}).toBe('done')
+    expect(readFileSync(join(repo,'parallel-claude.txt'),'utf8')).toBe('claude candidate\n')
+    expect(existsSync(join(repo,'parallel-codex.txt'))).toBe(false)
+    expect(existsSync(join(parallelFakeWorktree('codex'),'parallel-codex.txt'))).toBe(true)
+    for(const taskId of detail.parallelGroups![0]!.members.flatMap(m=>m.taskId?[m.taskId]:[])){
+      const current=await desktop<{runId?:string}>('GET',`/v1/workbench/task?id=${taskId}`)
+      if(current.body.runId)await desktop('POST','/v1/workbench/cancel',{id:taskId})
+    }
   })
 
   it('reads and confirms notebook replies through the operator routes', async () => {

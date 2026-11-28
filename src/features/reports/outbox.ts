@@ -9,7 +9,7 @@
  * src/features/reminders/store.ts, which this mirrors structurally.
  */
 import type {Db} from '../../lib/db'
-import type {PendingReport} from '../../domain/matters/report'
+import type {ComparisonReportKey,PendingReport} from '../../domain/matters/report'
 
 export type OutboxStatus = 'pending' | 'sent' | 'dropped'
 
@@ -25,6 +25,7 @@ export interface OutboxRecord {
   createdAt: number
   /** 这一条报的是哪一个事件(domain/speech/event-ref turnRef;v103、S3a):问门带上它,账和 App 推送并成一行。旧行 / 读不到 ⇒ null。 */
   ref: string | null
+  comparison: boolean
   /**
    * When this row FIRST hit a non-(-2) delivery failure (v66; evaluation
    * round 3). Null = it has never really failed yet (either brand new, or
@@ -72,9 +73,11 @@ export interface ReportOutboxStore {
    * OutboxRecord's doc comment for why `created_at` doesn't work). Returns
    * the row id (new or the merged/collapsed existing one).
    */
-  insert(report: PendingReport, now: number, ref?: string | null): Promise<number>
+  insert(report: PendingReport, now: number, ref?: string | null, comparison?: ComparisonReportKey): Promise<number>
   /** Pending rows with next_at <= now, oldest-due first. */
   listDue(now: number): Promise<OutboxRecord[]>
+  /** Synchronous recheck at the call to the send channel. */
+  comparisonCurrent(id: number): boolean
   /** Mark delivered. */
   markSent(id: number): Promise<void>
   /** Mark a permanent failure (e.g. origin chat no longer bound) — never retried. */
@@ -102,9 +105,13 @@ interface Row {
   created_at: number
   first_fail_at: number | null
   ref: string | null
+  comparison_position: number | null
 }
 
-const COLS = 'id, matter_id, origin_matter_id, origin_message_id, text, status, attempts, next_at, created_at, first_fail_at, ref'
+const COLS = 'id, matter_id, origin_matter_id, origin_message_id, text, status, attempts, next_at, created_at, first_fail_at, ref, comparison_position'
+const CURRENT_COMPARISON = `EXISTS(
+      SELECT 1 FROM matter_plan_comparisons c WHERE c.matter_id=matter_report_outbox.matter_id AND c.position=matter_report_outbox.comparison_position
+      AND c.revision=matter_report_outbox.comparison_revision AND c.text IS NOT NULL)`
 
 function rowToRecord(r: Row): OutboxRecord {
   return {
@@ -119,6 +126,7 @@ function rowToRecord(r: Row): OutboxRecord {
     createdAt: r.created_at,
     firstFailAt: r.first_fail_at,
     ref: r.ref,
+    comparison: r.comparison_position !== null,
   }
 }
 
@@ -130,7 +138,7 @@ export function makeReportOutboxStore(db: Db): ReportOutboxStore {
   // The one canonical pending row for a matter, if any — lowest id wins
   // (deterministic; matters if dogfood data has historical duplicates).
   const stmtPendingIdByMatter = db.query<{id: number}, [string]>(
-    "SELECT id FROM matter_report_outbox WHERE matter_id = ? AND status = 'pending' ORDER BY id LIMIT 1",
+    "SELECT id FROM matter_report_outbox WHERE matter_id = ? AND comparison_position IS NULL AND status = 'pending' ORDER BY id LIMIT 1",
   )
   // Merge into that ONE row by id (not by matter_id — a second matching row
   // must not also be touched). next_at only jumps to `now` when attempts=0
@@ -146,10 +154,13 @@ export function makeReportOutboxStore(db: Db): ReportOutboxStore {
   // time by the sweeper, and a silent DELETE leaves no trace that a real
   // queued delivery intent ever existed (evaluation round 3 issue ②).
   const stmtDropOtherPending = db.query<unknown, [string, number]>(
-    "UPDATE matter_report_outbox SET status = 'dropped' WHERE matter_id = ? AND status = 'pending' AND id <> ?",
+    "UPDATE matter_report_outbox SET status = 'dropped' WHERE matter_id = ? AND comparison_position IS NULL AND status = 'pending' AND id <> ?",
   )
   const stmtListDue = db.query<Row, [number]>(
-    `SELECT ${COLS} FROM matter_report_outbox WHERE status = 'pending' AND next_at <= ? ORDER BY next_at ASC, id ASC`,
+    `SELECT ${COLS} FROM matter_report_outbox WHERE status = 'pending' AND next_at <= ? AND (comparison_position IS NULL OR ${CURRENT_COMPARISON}) ORDER BY next_at ASC, id ASC`,
+  )
+  const stmtComparisonCurrent = db.query<{id: number}, [number]>(
+    `SELECT id FROM matter_report_outbox WHERE id = ? AND status = 'pending' AND ${CURRENT_COMPARISON}`,
   )
   // Status-guarded like reminders' markSent: a row that raced to 'dropped' (or
   // was already sent) must not flip back to 'sent'.
@@ -167,7 +178,18 @@ export function makeReportOutboxStore(db: Db): ReportOutboxStore {
   )
 
   return {
-    async insert(report, now, ref = null) {
+    async insert(report, now, ref = null, comparison) {
+      if(comparison){
+        const {position,revision}=comparison
+        return db.transaction(()=>{
+          db.query("UPDATE matter_report_outbox SET status='dropped' WHERE matter_id=? AND comparison_position=? AND comparison_revision<? AND status='pending'").run(report.matterId,position,revision)
+          const existing=db.query<{id:number},[string,number,number]>('SELECT id FROM matter_report_outbox WHERE matter_id=? AND comparison_position=? AND comparison_revision=?').get(report.matterId,position,revision)
+          if(existing)return existing.id
+          return db.query<{id:number},[string,string,string|null,string,number,number,number,number]>(`INSERT INTO matter_report_outbox
+            (matter_id,origin_matter_id,origin_message_id,text,next_at,created_at,comparison_position,comparison_revision)
+            VALUES(?,?,?,?,?,?,?,?) RETURNING id`).get(report.matterId,report.originMatterId,report.originMessageId,report.text,now,now,position,revision)!.id
+        })()
+      }
       const existing = stmtPendingIdByMatter.get(report.matterId)
       if (existing) {
         stmtMergeById.run(report.text, ref, now, existing.id)
@@ -179,6 +201,9 @@ export function makeReportOutboxStore(db: Db): ReportOutboxStore {
     },
     async listDue(now) {
       return stmtListDue.all(now).map(rowToRecord)
+    },
+    comparisonCurrent(id) {
+      return !!stmtComparisonCurrent.get(id)
     },
     async markSent(id) {
       stmtMarkSent.run(id)

@@ -9,6 +9,6 @@ export function ownerLedgerCaller(owner:string|null,caller?:Caller):boolean {
 }
 export function scopeMatterLedger<T extends object>(detail:T,allowed:boolean):T {
   if(allowed)return detail
-  const {notes:_notes,agentRuns:_agents,notesTotal:_total,terminalParticipants:_terminals,...rest}=detail as T&{notes?:unknown;agentRuns?:unknown;notesTotal?:unknown;terminalParticipants?:unknown}
+  const {parallelGroups:_parallel,notes:_notes,agentRuns:_agents,notesTotal:_total,terminalParticipants:_terminals,...rest}=detail as T&{parallelGroups?:unknown;notes?:unknown;agentRuns?:unknown;notesTotal?:unknown;terminalParticipants?:unknown}
   return rest as T
 }

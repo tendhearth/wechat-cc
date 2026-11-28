@@ -112,7 +112,7 @@ function routedDecision(intent: Intent): Decision | null {
 }
 
 /** 管家中间件 + 同一份状态上的只读探针(路由阶段用;null = 这句不是在说任务)。 */
-export type TaskReferenceMw = Middleware & { probe: (ctx: InboundCtx) => Promise<Intent | null>; clearFocus: (chatId: string) => void }
+export type TaskReferenceMw = Middleware & { probe: (ctx: InboundCtx) => Promise<Intent | null>; clearFocus: (chatId: string) => void; focusedTask: (chatId:string)=>string|undefined }
 
 export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw {
   const now = deps.now ?? Date.now
@@ -304,6 +304,7 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
   }
   // choice-invalid 是唯一"判定说是、执行却放行"的分支(数字越界):路由阶段算作 chat,但判定照带,本体好把待选清掉。
   mw.probe = async ctx => { const d = await decide(ctx); return d ? { kind: d.kind === 'choice-invalid' ? 'chat' : 'task-reference', data: d } : null }
+  mw.focusedTask=chatId=>currentFocus(chatId)?.taskId
   mw.clearFocus = chatId => {
     focus.delete(chatId); pending.delete(chatId); takeover.delete(chatId); waitOffer.delete(chatId)
     deps.noteChoice?.(chatId, null)

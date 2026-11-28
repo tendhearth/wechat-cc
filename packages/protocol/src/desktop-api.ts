@@ -27,7 +27,7 @@ import z from 'zod'
 import { WIRE_ROUTE_ALIASES } from './wire-compat'
 import {
   PHONE_API_SCHEMAS, PhoneErrorResponse, CliActivityPage, CliPendingPermission, Attachment, CliSessionRow, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, EntryResult, MATTER_ORIGINS, Matter, MatterArtifactChunk, MatterDetail, MatterEvent, MatterPermission, PermissionScript, PermissionScriptChunk,
-  MatterAgent,MatterNote,MatterHandoffResult, MatterSayResult, NativeSessionPage, NativeSessionRow, OverseerToday, PhoneChangesTurn, PhoneRewindPreview, PhoneWorktreeResult, WorkbenchExecutorCapabilities,
+  MatterParallelGroup,MatterAgent,MatterNote,MatterHandoffResult, MatterSayResult, NativeSessionPage, NativeSessionRow, OverseerToday, PhoneChangesTurn, PhoneRewindPreview, PhoneWorktreeResult, WorkbenchExecutorCapabilities,
 } from './api'
 
 // ── GET /v1/health ───────────────────────────────────────────────────────────
@@ -928,6 +928,13 @@ export const WorkbenchEntryOptionsResponse = EntryOptions
 // ── POST /v1/workbench/create-entry(202)/ GET /v1/workbench/entry-receipt ──
 export const WorkbenchEntryResultResponse = z.object({ receipt: EntryReceipt, task: WorkbenchDesktopTaskView })
 
+const PlanExecutor=z.string().trim().min(1).max(80)
+const PlanBrief=z.string().trim().min(1).max(20_000)
+export const MatterPlanLeg=z.union([
+  z.object({executor:PlanExecutor.optional(),brief:PlanBrief}).strict(),
+  z.object({parallel:z.array(PlanExecutor).min(2).max(3).refine(ids=>new Set(ids.map(id=>id.toLowerCase())).size===ids.length),brief:PlanBrief}).strict(),
+])
+
 /** Same project/managed target as the owner conversation's existing entry. */
 export const MatterPlanRequest=z.object({
   requestId:EntryRequestId.optional(),
@@ -940,8 +947,8 @@ export const MatterPlanRequest=z.object({
     z.object({kind:z.literal('local')}).strict(),
   ]).optional(),
   title:z.string().trim().min(1).max(120),
-  legs:z.array(z.object({executor:z.string().trim().min(1).max(80).optional(),brief:z.string().trim().min(1).max(20_000)}).strict()).min(1).max(6),
-}).strict().refine(input=>input.legs.length===1||input.legs.every(leg=>leg.executor!==undefined),{path:['legs'],message:'Multiple legs each require an executor'})
+  legs:z.array(MatterPlanLeg).min(1).max(6),
+}).strict().refine(input=>input.legs.length===1||input.legs.every(leg=>'parallel' in leg||leg.executor!==undefined),{path:['legs'],message:'Multiple legs each require an executor'})
 
 // ── GET /v1/workbench(列表)──
 export const WorkbenchListResponse = z.object({
@@ -1034,7 +1041,7 @@ const WorkbenchHandoffView = z.object({
   sourceStatus: z.string(), targetStatus: z.string(),
 })
 export const WorkbenchTaskDetailResponse = z.object({
-  agentRuns:z.array(MatterAgent).optional(),notes:z.array(MatterNote).optional(),notesTotal:z.number().int().nonnegative().optional(),
+  parallelGroups:z.array(MatterParallelGroup).optional(),agentRuns:z.array(MatterAgent).optional(),notes:z.array(MatterNote).optional(),notesTotal:z.number().int().nonnegative().optional(),
   task: WorkbenchDesktopTaskView,
   events: z.array(WorkbenchTaskEvent),
   artifacts: z.array(WorkbenchTaskArtifact),

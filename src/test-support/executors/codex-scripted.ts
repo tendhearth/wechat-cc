@@ -206,7 +206,7 @@ export function createScriptedCodex(opts: ScriptedCodexOptions): ScriptedCodex {
             const m = await answered
             const got = { ...(m.result !== undefined ? { result: m.result } : {}), ...(m.error !== undefined ? { error: m.error } : {}) }
             responses.push({ method: s.request.method, ...got })
-            s.onResponse?.(got)
+            await s.onResponse?.(got)
           } else if ('shell' in s) {
             const id = nextId('cmd')
             itemNote('item/started', { id, type: 'commandExecution', command: s.shell, cwd: '/', status: 'inProgress', commandActions: [], aggregatedOutput: null, exitCode: null })

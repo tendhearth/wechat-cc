@@ -119,6 +119,24 @@ describe('inbound pipeline (integration)', () => {
     const original = text === '转给后端,Claude 看结果' ? '任务 a85aec02 结果' : text === '交给另一位来完成' ? '任务 a85aec02' : text.startsWith('任务 ') ? text : `任务 a85aec02 补充 ${text}`
     expect(handled).toEqual(handoff ? [] : [original])
   })
+  it('passes the current task-reference focus to the parallel choice command',async()=>{
+    const {deps,spy}=fakeDeps()
+    const handleWechat=vi.fn(async()=>'收到'),sendMessage=vi.fn(async()=>({}))
+    withCommands(deps,[makeTaskCommand({handleWechat,sendMessage}),...baseCommands()])
+    deps.taskReference={
+      ownerChatId:()=>'c1',candidates:()=>[{id:'a85aec02',title:'整理 TODO',project:'sample-project',path:'/project',providerId:'codex',phase:'replied',updatedAt:0}],
+      handleWechat,sendMessage,log:()=>{},
+    }
+    const pipeline=buildInboundPipeline(deps)
+    const focus=mkCtx();focus.msg.text='接下来说整理 TODO 那件'
+    await pipeline(focus)
+    expect(focus.intent?.kind).toBe('task-reference')
+    const choice=mkCtx();choice.msg.text='用 Codex 那版'
+    await pipeline(choice)
+    expect(choice.intent?.kind).toBe('command')
+    expect(handleWechat).toHaveBeenCalledExactlyOnceWith('c1',choice.msg.text,expect.objectContaining({focusTaskId:'a85aec02'}))
+    expect(spy.dispatch).not.toHaveBeenCalled()
+  })
   it('consumes an accepted workbench file delivery without a duplicate text reply or companion dispatch',async()=>{
     const {deps,spy}=fakeDeps(),send=vi.fn(async()=>{})
     withWorkbench(deps,{handleWechat:async()=>({kind:'artifact_delivered',receiptId:'saved-delivery'}),sendMessage:send})

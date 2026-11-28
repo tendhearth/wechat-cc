@@ -82,8 +82,8 @@ export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
     return input?.id===key&&input.taskId===id?input:null
   }
   function drainInputs(id:string,expectedDirectoryIdentity:string,start:StartRun){
-    if(state.autoContinueBlocked.has(id))return
-    const next=store.liveInputs.next(id);if(!next)return
+    if(state.autoContinueBlocked.has(id))return false
+    const next=store.liveInputs.next(id);if(!next)return false
     try{
       const task=store.get(id),decision=continuation(task)
       if(decision.mode!=='resume')throw Error('原会话需要你确认恢复方式，补充尚未发送。')
@@ -92,7 +92,8 @@ export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
       const execution=next.execution??store.execution.run(id,next.runId)?.choice??store.execution.choice(id)
       requireInput(task.providerId,next.attachments??[],execution,true)
       start(task,next.text,expectedDirectoryIdentity,{mode:'resume',sessionId:task.sessionId!},undefined,undefined,undefined,next.id,next.attachments,undefined,execution)
-    }catch(error){holdInputs(id,error instanceof Error?error.message:'input_not_delivered')}
+      return true
+    }catch(error){holdInputs(id,error instanceof Error?error.message:'input_not_delivered');return false}
   }
 
   function resolveAnswer(id:string,requestId:string,answers:unknown){
@@ -107,6 +108,8 @@ export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
     if(!input||input.taskId!==id||input.status!=='pending')throw Error('input_stale')
     store.liveInputs.set(requestId,'withdrawn')
     ctx.hub.bumped(id)
+    const running=state.runsByTask.get(id)
+    if(running&&store.plans.candidateForTask(id)?.runId===running.ledgerRunId)settleAfterDecision(running)
   }
   async function submitInput(id:string,input:{runId:string;requestId:string;text:string}&InputMaterials,attachmentPolicy?:'owner',origin:'owner'|'automatic'='owner'){
     ctx.ensureAccepting()
@@ -152,11 +155,14 @@ export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
       // (BASE 靠 `acquireTurnLease` 里的 `alive()` 挡这一下,那个函数这一轮删掉了。)
       if(state.runsByTask.get(id)!==running||running.cancelled||running.finishing||running.uncertain)throw Error('input_stale')
     }
-    let saved:LiveInput
+    let saved:LiveInput,parallelRoot:string|null=null
     try{
       saved=store.atomic(()=>{
         store.attachments.bind(attachments.map(a=>a.id),id,input.draftId,attachmentPolicy?continuationAttachmentScope(id,attachments):undefined)
-        return store.liveInputs.add({id:requestId,taskId:id,runId:input.runId,text,attachments,execution:running.execution})
+        const saved=store.liveInputs.add({id:requestId,taskId:id,runId:input.runId,text,attachments,execution:running.execution})
+        parallelRoot=store.plans.reopenCandidate(id,running.ledgerRunId)
+        if(parallelRoot)store.bump(parallelRoot)
+        return saved
       })
     }catch(error){
       // 这一句没存下来就没有人会去写文件夹:会话还安静着,把自动收工的计时重新起上,
@@ -164,12 +170,18 @@ export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
       armIdleClose(running)
       throw error
     }
+    if(parallelRoot)ctx.hub.bumped(parallelRoot)
     const runtime=running.session?.workbenchRuntime
     if(runtime){
       if(inputMode(running)==='queue')return saved
       store.liveInputs.set(saved.id,'sending');ctx.hub.bumped(id)
       ;(running.runtimeInputs??=new Map()).set(saved.id,saved)
       const submittedTurn=running.turn?{...running.turn,mode:inputMode(running)}:undefined
+      const deliveryFailed=(error:unknown)=>{
+        settleRuntimeInput(running,saved,error??new Error('input_not_delivered'),submittedTurn)
+        if(parallelRoot){running.parallelInputFailed=true;settleAfterDecision(running)}
+        else armIdleClose(running)
+      }
       try{
         if(canonicalProject(running.path)!==running.path||directoryIdentity(running.path)!==running.directoryIdentity)throw Error('invalid_path')
         const material=store.attachments.prepare(id,attachments,running.path,ctx.stateDir)
@@ -178,22 +190,31 @@ export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
         // 「投给 runtime 了」这件事本身就是新一轮开始的证据,回报去重键(reportOnce)
         // 靠它才不会因为快照从未被看见处于「忙碌」而永久锁死。
         running.turnSeq++
-        const plan=store.plans.get(id),baton=running.ledgerRunId??running.identity
+        running.parallelInputFailed=false
+        // A native acknowledgement can append its user row after the reply.
+        if(parallelRoot)running.parallelInputStartSeq=store.steps(id).at(-1)?.seq??0
+        const root=store.plans.root(id),plan=store.plans.get(root),baton=running.ledgerRunId??running.identity
         const stoppedLeg=plan?.state==='approved'?plan.legs.find(l=>l.runId===baton&&l.state==='stopped'):undefined
         if(stoppedLeg){
-          if(isRelayContinue(text)||stoppedLeg.stopReason==='leg_asked')store.plans.resume(id,baton);else store.plans.cancel(id)
+          if(isRelayContinue(text)||stoppedLeg.stopReason==='leg_asked')store.plans.resume(root,baton);else store.plans.cancel(root)
         }else if(plan?.state==='approved'&&plan.legs.some(l=>l.runId===baton&&l.state==='completed')&&!plan.legs.some(l=>l.state==='running'||l.state==='stopped')){
           // A new request to the retained, completed executor takes over the held plan.
-          store.plans.cancel(id)
+          store.plans.cancel(root)
         }
         store.ledger.running(running.ledgerRunId??running.identity)
         // Replay acknowledgement may wait behind an autonomous native turn.
         // The HTTP receipt is already durable; never wait here or auto-resend.
         void runtime.submit(saved.id,text,material).then(
-          accepted=>settleRuntimeInput(running,saved,undefined,submittedTurn,accepted,origin==='owner'),
-          error=>{settleRuntimeInput(running,saved,error??new Error('input_not_delivered'),submittedTurn);armIdleClose(running)},
-        )
-      }catch(error){settleRuntimeInput(running,saved,error??new Error('input_not_delivered'),submittedTurn);armIdleClose(running)}
+          accepted=>{
+            const delivered=settleRuntimeInput(running,saved,undefined,submittedTurn,accepted,origin==='owner')
+            if(!delivered||!parallelRoot||state.runsByTask.get(id)!==running)return
+            const member=store.plans.candidateForTask(id),plan=store.plans.get(parallelRoot)
+            if(member&&!member.chosen&&member.runId===running.ledgerRunId&&plan?.state==='approved'
+              &&plan.legs.some(leg=>leg.position===member.position&&leg.state==='running'))settleAfterDecision(running)
+          },
+          deliveryFailed,
+        ).catch(error=>ctx.log?.('WORKBENCH',`input follow-up failed: ${String(error)}`))
+      }catch(error){deliveryFailed(error)}
       return store.liveInputs.get(saved.id)!
     }
     if(!running.session?.steer)return saved

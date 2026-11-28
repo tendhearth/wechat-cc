@@ -65,6 +65,7 @@ export function workbenchFeature(o: {
       const deps = o.deps(ctx)
       const service = wireWorkbench({ ...deps, internalApi })
       ctx.own('stop', () => service.shutdown())
+      ctx.interval('parallel-choice-dispatch', 60_000, service.retryPendingChoices)
       // 手机令牌读原生会话(P3c-4,以前在 wire-settings-panel.ts):单飞 + 短缓存(裁定 8),10 s 预算超了也不会堆积后台扫描。
       const phoneSessions = phoneSessionsOf(service)
       internalApi.mount('workbench', workbenchRoutes({

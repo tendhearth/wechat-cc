@@ -16,7 +16,7 @@ export type MatterPlanInput=z.infer<typeof MatterPlanRequest>
 export interface PlanConversation {scope:string;path?:string}
 export interface PlanCaller {sessionKey?:string;chatId?:string;provider?:string}
 export interface PlanTarget {target:EntryTarget;projectName:string;projectPath:string;registrationPath?:string}
-export type PlanLegs=Array<{executor:string;brief:string}>
+export type PlanLegs=Array<{executor:string;brief:string;parallel?:string[]}>
 export interface PreparedPlanTarget extends PlanTarget {legs:PlanLegs}
 export interface PlanExecutors {
   available:readonly string[]
@@ -29,6 +29,7 @@ export class PlanInputError extends Error {
 
 export function resolvePlanLegs(input:MatterPlanInput,executors:()=>PlanExecutors):PlanLegs {
   return input.legs.map(leg=>{
+    if('parallel' in leg)return {executor:leg.parallel[0]!,brief:leg.brief,parallel:leg.parallel}
     if(leg.executor!==undefined)return {executor:leg.executor,brief:leg.brief}
     if(input.legs.length!==1)throw new PlanInputError('invalid_matter_plan')
     const {available,defaultProviderId,defaultUnavailableReason}=executors()
@@ -73,9 +74,11 @@ const canonical=(path:string)=>{try{return realpathSync(path)}catch{return null}
 /** The catalog takes priority. Only a stored place can supply an unregistered directory. */
 export function resolvePlanTarget(input:MatterPlanInput,projects:ProjectCatalogEntry[],path?:string,places:()=>readonly PlanPlace[]=()=>[],ownerChatId=''):PlanTarget {
   const fail=(code:string):never=>{throw new PlanInputError(code,projects)}
+  const parallel=input.legs.some(leg=>'parallel' in leg)
   const target=input.target
   if(input.project!==undefined&&target!==undefined)return fail('invalid_target')
   if(target?.kind==='managed'){
+    if(parallel)return fail('matter_parallel_requires_project')
     if(input.isolation||input.base)return fail('invalid_target')
     return {target,projectName:'由 CC 安排',projectPath:'CC 受管工作区'}
   }
@@ -93,7 +96,7 @@ export function resolvePlanTarget(input:MatterPlanInput,projects:ProjectCatalogE
   if(found.length>1)return fail('matter_project_ambiguous')
   const project=found[0]
 
-  const isolation=input.isolation??(target?.kind==='project'?target.isolation:undefined)
+  const isolation=input.isolation??(target?.kind==='project'?target.isolation:undefined)??(parallel?'worktree':undefined)
   const base=input.base??(target?.kind==='project'?target.base:undefined)
   if(base!==undefined&&(isolation!=='worktree'||!validBaseBranch(base)))return fail('invalid_target')
   const options={...(isolation?{isolation}:{}),...(base?{base}:{})}
@@ -125,7 +128,7 @@ export function resolvePlanTarget(input:MatterPlanInput,projects:ProjectCatalogE
   return {target:{kind:'project',projectId,...options},projectName:place.name,projectPath:place.root,registrationPath}
 }
 
-export function planRequestId(scope:string,input:{title:string;target:EntryTarget;legs:MatterPlanInput['legs']}):string {
+export function planRequestId(scope:string,input:{title:string;target:EntryTarget;legs:PlanLegs|MatterPlanInput['legs']}):string {
   const hash=createHash('sha256').update(JSON.stringify(['matter-plan',scope,input.title,input.target,input.legs])).digest('hex')
   // Content-derived id in the existing entry's UUID v4 shape; no model-supplied identifiers.
   return `${hash.slice(0,8)}-${hash.slice(8,12)}-4${hash.slice(13,16)}-8${hash.slice(17,20)}-${hash.slice(20,32)}`

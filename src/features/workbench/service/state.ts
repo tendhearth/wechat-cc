@@ -23,6 +23,9 @@ export interface Active extends PathReservation {
   relayReportedTurn?:number
   ledgerOpening?:boolean
   ledgerRunId?:string
+  parallelInputFailed?:boolean
+  parallelInputStartSeq?:number
+  ownerStopped?:boolean
   execution:AgentExecutionChoice
   attachments:Attachment[]
   handoffId?:string

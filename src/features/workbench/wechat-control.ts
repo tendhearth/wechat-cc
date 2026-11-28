@@ -17,15 +17,18 @@ import type {ProjectCatalogEntry} from '../../adapters/workbench/project-catalog
 import { validateUserInputAnswers } from '../../adapters/workbench/user-input'
 import {resultCommandHelp,resultToken,wechatResultPage} from './wechat-results'
 import {isWorkbenchProviderId} from '../../domain/workbench/executor-capabilities'
+import {candidateLabels,parseParallelChoice} from '../../domain/matter-parallel'
+import type {MatterParallelGroupT} from '@wechat-cc/protocol'
+import type {WorktreeActionResult} from './service/worktree'
 import {redactSecrets} from '../../domain/cli-transcript'
 import type {ReviewTurn} from './review'
 import { WECHAT_PERMISSION_INCOMPLETE, type WechatPermissionCard, type WechatPermissions } from '../../ports/wechat'
 import { renderWechatPermissionCard } from './wechat-permission-card'
 
 /** origin(2026-10-19):只在 App 一轮(桌面 / 手机说的话过同一张消费者表)时由 daemon 填;省略 ⇒ 真的是微信入站。不进回执身份。 */
-export interface WechatMessageIdentity {accountId:string;userId:string;msgId?:string;createTimeMs:number;origin?:MatterOrigin|null}
+export interface WechatMessageIdentity {accountId:string;userId:string;msgId?:string;createTimeMs:number;origin?:MatterOrigin|null;focusTaskId?:string}
 export type WechatWorkbenchReply=string|{kind:'artifact_delivered';receiptId:string}|{kind:'permission_card';card:WechatPermissionCard}
-type Detail=ReturnType<WorkbenchStore['detail']>&{runId?:string;runtime?:AgentRuntimeSnapshot;inputMode?:'steer'|'send'|'queue';inputs:LiveInput[];permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];wechatNotifications?:{enabled:boolean;notices:Array<{status:string}>};task:Task&{waitingFor?:TaskWaitingFor|null;networkSuspended?:{since:number}}}
+type Detail=ReturnType<WorkbenchStore['detail']>&{parallelGroups?:MatterParallelGroupT[];runId?:string;runtime?:AgentRuntimeSnapshot;inputMode?:'steer'|'send'|'queue';inputs:LiveInput[];permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];wechatNotifications?:{enabled:boolean;notices:Array<{status:string}>};task:Task&{waitingFor?:TaskWaitingFor|null;networkSuspended?:{since:number}}}
 interface Actions {
   pendingWechatPermissionCard?: WechatPermissions['pendingWechatPermissionCard']
   projects():ProjectCatalogEntry[]
@@ -41,7 +44,8 @@ interface Actions {
   /** 变更快照(新→旧);没接就没有「改动」这条命令。 */
   reviewList?(id:string):ReviewTurn[]
   /** 独立工作区三个动作(2026-10-08 微信也能做);没接就回「在桌面上做」。 */
-  worktreeAction?(id:string,action:'commit'|'remove'|'merge'|'reopen'):Promise<{branch:string;committed?:boolean;sha?:string;mergeHint?:string;removed?:boolean;removing?:boolean;merged?:boolean;into?:string;reopened?:boolean}>|{branch:string;committed?:boolean;sha?:string;mergeHint?:string;removed?:boolean;removing?:boolean;merged?:boolean;into?:string;reopened?:boolean}
+  parallelChoiceTask?(owner:string,name:string,matterId?:string,revision?:number):string
+  worktreeAction?(id:string,action:'commit'|'remove'|'merge'|'reopen',record?:(result:WorktreeActionResult)=>void):Promise<WorktreeActionResult>|WorktreeActionResult
 }
 const UUID='[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}'
 const requestCommand=new RegExp(`^(权限|问题|允许|拒绝|回答)\\s+(${UUID})(?:\\s+([\\s\\S]+))?$`,'i')
@@ -62,7 +66,7 @@ const stopUnconfirmed='这条停止请求已记录，但尚未确认执行结果
 const usage=(id='<任务编号>')=>`用法：\n项目：任务 项目\n新建：任务 新建 <项目编号> <要求>\n并行：任务 新建 <项目编号> 独立 <要求>（从某个分支开始：独立@<分支>）\n从 GitHub issue 开工：任务 新建 <项目编号> issue <编号>\n两家对比：任务 新建 <项目编号> 对比 @claude @codex <要求>（并排看：任务 对比 <编号> <编号>）\n查看：任务 ${id}\n补充：任务 ${id} 补充 <要求>\n改动：任务 ${id} 改动\n记成经验：任务 ${id} 记成经验 <一句话>\n换一家来审：任务 ${id} 请 @codex 审\n独立工作区：任务 ${id} 提交 / 合回 / 删除工作区 / 重开工作区\n停止：任务 ${id} 停止\n处理待办时，请复制任务消息中的完整请求编号。`
 const clip=(value:string,max:number)=>value.length>max?value.slice(0,max)+'…':value
 const singleLine=(value:string,max=100)=>clip(value.replace(/[\r\n]+/g,' '),max)
-export const isWechatTaskCommand=(text:string)=>/^(?:任务|\/task)(?:\s|$)/i.test(text.trim())
+export const isWechatTaskCommand=(text:string)=>/^(?:任务|\/task)(?:\s|$)/i.test(text.trim())||parseParallelChoice(text)!==null
 
 // Internal receipt identity only; neither the hash nor message metadata is shown in replies.
 function inputId(chatId:string,taskId:string,text:string,identity?:WechatMessageIdentity){
@@ -153,6 +157,10 @@ function statusReply(detail:Detail){
   const latest=events.filter(e=>e.kind==='text').at(-1)
   const error=events.filter(e=>e.kind==='error').at(-1)?.text
   const lines=[`${singleLine(task.title,120)} · ${id}`,`${task.providerId} · ${runtimeStatus(task.status,detail.runtime,task.networkSuspended)}`]
+  for(const group of detail.parallelGroups??[]){
+    lines.push(`第 ${group.position} 棒 · ${group.members.length} 位并行`)
+    for(const m of group.members)lines.push(`${m.executor} · ${candidateLabels[m.status]}${m.chosen?' · 已选':''}${m.taskId?` · 查看：任务 ${m.taskId}`:''}`)
+  }
   if(detail.wechatNotifications){
     const unknown=detail.wechatNotifications.notices.filter(n=>n.status==='unknown'||n.status==='sending').length
     const waiting=detail.wechatNotifications.notices.filter(n=>n.status==='pending').length
@@ -194,6 +202,9 @@ function statusReply(detail:Detail){
   lines.push(`补充：任务 ${id} 补充 <要求>`,`查看结果：任务 ${id} 结果`)
   return lines.join('\n\n')
 }
+function mergeReply(id:string,r:WorktreeActionResult){
+  return r.merged?`任务 ${id}：分支 ${r.branch} 已合进项目的 ${r.into??'当前分支'}。\n不再需要工作区：任务 ${id} 删除工作区`:`任务 ${id}：分支 ${r.branch} 上没有项目里还没有的提交，不用合。没提交的改动要先发「任务 ${id} 提交」。`
+}
 /** 「任务 <编号> 提交 / 合回 / 删除工作区」:与桌面、手机同一个 worktreeAction;拒绝原因都说成人话。 */
 async function worktreeReply(id:string,verb:'提交'|'合回'|'删除工作区'|'重开工作区',act:Actions['worktreeAction']){
   if(!act)return '这里做不了独立工作区的操作，请在桌面工作台上做。'
@@ -201,7 +212,7 @@ async function worktreeReply(id:string,verb:'提交'|'合回'|'删除工作区'|
     const r=await act(id,verb==='提交'?'commit':verb==='合回'?'merge':verb==='重开工作区'?'reopen':'remove')
     if(verb==='重开工作区')return `任务 ${id}：已从分支 ${r.branch} 重新打开独立工作区，可以接着做了。\n补充：任务 ${id} 补充 <要求>`
     if(verb==='提交')return r.committed?`任务 ${id}：已提交到分支 ${r.branch}（${(r.sha??'').slice(0,7)}）。\n合回项目：任务 ${id} 合回`:`任务 ${id}：分支 ${r.branch} 上没有新的改动要提交。`
-    if(verb==='合回')return r.merged?`任务 ${id}：分支 ${r.branch} 已合进项目的 ${r.into??'当前分支'}。\n不再需要工作区：任务 ${id} 删除工作区`:`任务 ${id}：分支 ${r.branch} 上没有项目里还没有的提交，不用合。没提交的改动要先发「任务 ${id} 提交」。`
+    if(verb==='合回')return mergeReply(id,r)
     // 有工作区脚本(2026-10-20):先停在跑的、跑完收尾脚本再删,结果进时间线
     if(r.removing)return `任务 ${id}：正在收尾（停掉在跑的脚本、运行收尾脚本），完了会删除独立工作区，分支 ${r.branch} 保留在项目里。`
     return `任务 ${id}：独立工作区已删除，分支 ${r.branch} 保留在项目里。`
@@ -259,6 +270,42 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
   return async(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>=>{
     if(!isWechatTaskCommand(text))return null
     if(!opts.ownerChatId()||chatId!==opts.ownerChatId()||(identity&&identity.userId!==chatId))return null
+    const choice=parseParallelChoice(text)
+    const directMerge=/^(?:任务|\/task)\s+([a-f0-9]{8})\s+合回$/i.exec(text.trim())?.[1]?.toLowerCase()
+    if(choice||directMerge){
+      const receiptId=identity?inputId(chatId,'parallel-choice',text,identity):null
+      const hash=createHash('sha256').update(text).digest('hex')
+      let taskId:string|null=directMerge??null
+      const save=(reply:string)=>{if(receiptId)opts.store.plans.saveChoiceReceipt(receiptId,hash,taskId,reply)}
+      try{
+        const prior=receiptId?opts.store.plans.choiceReceipt(receiptId,hash):undefined
+        if(prior!==undefined)return prior
+        if(choice){
+          if(!opts.actions.parallelChoiceTask)return null
+          taskId=opts.actions.parallelChoiceTask(chatId,choice.name,choice.matterId,choice.revision)
+        }
+        if(choice||taskId&&opts.store.plans.candidateForTask(taskId)){
+          const target=taskId!
+          if(opts.store.get(target).ownerChatId!==chatId)return unavailable
+          if(!opts.actions.worktreeAction)return worktreeReply(target,'合回',undefined)
+          const choosing=opts.store.plans.candidateForTask(target)?.chosen===false
+          const format=(result:WorktreeActionResult)=>choosing&&!result.merged
+            ? `任务 ${target}：已选定这版，项目已包含这版的提交。`
+            : mergeReply(target,result)
+          const merged=await opts.actions.worktreeAction(target,'merge',result=>save(format(result)))
+          return format(merged)
+        }
+      }catch(error){
+        const code=error instanceof Error?error.message:''
+        const reply=workbenchErrorSpec(code)?.wechatWorktree??'没有找到可采用的版本。'
+        if(code!=='control_conflict'){
+          const prior=receiptId?opts.store.plans.choiceReceipt(receiptId,hash):undefined
+          if(prior!==undefined)return prior
+          save(reply)
+        }
+        return reply
+      }
+    }
     const artifactRequestId=inputId(chatId,'',text,identity),commandHash=createHash('sha256').update(text).digest('hex')
     const originalFile=opts.store.artifactDeliveries.get(artifactRequestId)
     if(originalFile&&(originalFile.commandHash!==commandHash||originalFile.ownerChatId!==chatId||originalFile.accountId!==identity?.accountId))return failure(Error('artifact_delivery_conflict'),originalFile.taskId)
@@ -463,17 +510,31 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
         return `任务 ${id}：已提交回答。`
       }
       if(/^(权限|问题|允许|拒绝|回答|停止|结果|状态|待办|提醒我|静音|正文|文件|改动|提交|合回|删除工作区|重开工作区)(?:\s|$)/.test(suffix))return usage(id)
-      const supplement=opts.store.plans.get(task.id)?.state==='approved'&&/^继续(?:\s|$)/.test(suffix)?suffix.trim():suffix.replace(/^(?:补充|继续)(?:\s+|$)/,'').trim()
-      if(!supplement)return usage(id)
+      const root=opts.store.plans.root(id),plan=opts.store.plans.get(root)
+      const relayContinue=plan?.state==='approved'&&isRelayContinue(suffix)
+      const supplement=relayContinue?suffix.trim():suffix.replace(/^(?:补充|继续)(?:\s+|$)/,'').trim()
       const prior=opts.store.liveInputs.get(requestId)
-      if(prior)return inputReply(await opts.actions.submitInput(id,{runId:prior.runId,requestId,text:supplement}),!!opts.actions.detail(id).runtime?.retained,!!opts.store.plans.get(id))
-      const detail=opts.actions.detail(id)
+      if(prior){
+        const target=prior.taskId
+        if(target!==id&&opts.store.plans.root(target)!==root)throw Error('input_conflict')
+        return inputReply(await opts.actions.submitInput(target,{runId:prior.runId,requestId,text:prior.text===suffix.trim()&&isRelayContinue(prior.text)?prior.text:supplement}),!!opts.actions.detail(target).runtime?.retained,!!plan)
+      }
+      if(!supplement)return usage(id)
+      let target=id
+      if(relayContinue){
+        const current=plan.legs.find(leg=>leg.state==='running'||leg.state==='stopped')
+        const group=current?opts.store.plans.candidates(root,current.position):[]
+        if(group.length&&current?.stopReason==='leg_interrupted'&&id===root)target=opts.store.plans.activeTask(root,current.position)
+        else if(group.length&&!group.some(member=>member.taskId===id))return '这一棒在并行处理。请带上要继续的版本的任务编号。'
+        if(!group.length)target=opts.store.plans.activeTask(root,current?.position??plan.legs.find(leg=>leg.state==='pending')?.position)
+      }
+      const detail=opts.actions.detail(target)
       if(detail.runId){
         if(!detail.inputMode)throw Error('input_stale')
-        return inputReply(await opts.actions.submitInput(id,{runId:detail.runId,requestId,text:supplement}),!!detail.runtime?.retained,!!opts.store.plans.get(id))
+        return inputReply(await opts.actions.submitInput(target,{runId:detail.runId,requestId,text:supplement}),!!detail.runtime?.retained,!!plan)
       }
-      opts.actions.continueTask(task.id,supplement,{inputRequestId:requestId})
-      return `任务 ${id}：已收到补充要求，继续处理。稍后发送「任务 ${id}」查看进展。`
+      opts.actions.continueTask(target,supplement,{inputRequestId:requestId})
+      return `任务 ${target}：已收到补充要求，继续处理。稍后发送「任务 ${target}」查看进展。`
     }catch(error){return failure(error,id)}
   }
 }

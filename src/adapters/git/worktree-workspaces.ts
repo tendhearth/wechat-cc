@@ -45,7 +45,8 @@ export function git(cwd: string, args: string[], opts: { ownerConfig?: boolean; 
     phase = 'command'
     const remaining = deadline - Date.now()
     if (remaining <= 0) throw Object.assign(Error('worktree_git_timeout'), { code: 'ETIMEDOUT' })
-    return execFileSync('git', [...SAFE_GIT, ...filters, ...args], { cwd, env, encoding: 'utf8', timeout: remaining, killSignal: 'SIGKILL', maxBuffer: 16 * 1024 * 1024, ...(opts.input !== undefined ? { input: opts.input } : { stdio: ['ignore', 'pipe', 'pipe'] }) }).trim()
+    const output=execFileSync('git', [...SAFE_GIT, ...filters, ...args], { cwd, env, encoding: 'utf8', timeout: remaining, killSignal: 'SIGKILL', maxBuffer: 16 * 1024 * 1024, ...(opts.input !== undefined ? { input: opts.input } : { stdio: ['ignore', 'pipe', 'pipe'] }) })
+    return args.includes('-z')?output:output.trim()
   } catch (error) {
     const stderr = String((error as { stderr?: unknown }).stderr ?? '').trim().split('\n').slice(0, 3).join(' | ')
     // exitStatus:git 自己退出的码;超时被杀、起不来时没有 —— repoRootOrFail 靠它分「git 答了」和「这次没问成」,再看 stderr 判是不是仓库
@@ -287,6 +288,22 @@ export function worktreeDirty(root: string): boolean {
   return git(root, ['status', '--porcelain', '--untracked-files=normal']).length > 0
 }
 
+/** Net diff against the group's frozen start. A dirty checkout may have untracked files. */
+export function worktreeNetChanges(root:string,base:string){
+  const sha=git(root,['rev-parse','--verify','HEAD^{commit}'])
+  const dirty=worktreeDirty(root)
+  const snapshot=dirty?undefined:sha
+  try{
+    const output=git(root,['diff','--no-ext-diff','--no-textconv','--ignore-submodules=none','--no-renames','--numstat','-z',base,...(dirty?[]:[sha]),'--'])
+    const files=output.split('\0').filter(Boolean).map(row=>{
+      const match=/^(\d+|-)\t(\d+|-)\t([\s\S]+)$/.exec(row)
+      if(!match)throw Error('worktree_git_failed')
+      return {path:match[3]!,added:match[1]==='-'?null:Number(match[1]),removed:match[2]==='-'?null:Number(match[2])}
+    })
+    return {snapshot,files,partial:dirty||files.some(file=>file.added===null||file.removed===null)}
+  }catch{return {snapshot,files:null,partial:true}}
+}
+
 /**
  * 提交到分支:没有改动 ⇒ `{committed:false}`;有 ⇒ `git add -A` + `git commit`,返回提交号。
  * 作者用仓库自己的配置(读不到就用 CC 的名字,不让提交因为没配 user.name 失败)。
@@ -317,7 +334,7 @@ export function removeWorktree(repoRoot: string, root: string): void {
  *   项目不在任何分支上 ⇒ `project_detached`;项目已经往前走、快进不了 ⇒ `worktree_not_ff`。
  * 分支早已在项目里(主人自己合过 / 没改动)⇒ `{merged:false}`,也算合进去了。返回项目当前分支名。
  */
-export function mergeWorktree(repoRoot: string, root: string, branch: string): { merged: boolean; into: string } {
+export function mergeWorktree(repoRoot: string, root: string, branch: string, expectedSha?:string): { merged: boolean; into: string } {
   if (worktreeDirty(root)) throw new Error('worktree_uncommitted')
   const owner = { ownerConfig: true }
   if (git(repoRoot, ['status', '--porcelain', '--untracked-files=no'], owner).length > 0) throw new Error('project_dirty')
@@ -325,9 +342,12 @@ export function mergeWorktree(repoRoot: string, root: string, branch: string): {
   try { into = git(repoRoot, ['symbolic-ref', '-q', '--short', 'HEAD'], owner) } catch { /* 下面拒绝 */ }
   if (!into) throw new Error('project_detached')
   const ancestor = (a: string, b: string) => { try { git(repoRoot, ['merge-base', '--is-ancestor', a, b], owner); return true } catch { return false } }
-  if (ancestor(`refs/heads/${branch}`, 'HEAD')) return { merged: false, into }
-  if (!ancestor('HEAD', `refs/heads/${branch}`)) throw new Error('worktree_not_ff')
-  git(repoRoot, ['merge', '--ff-only', '--no-edit', `refs/heads/${branch}`], owner)
+  const ref=`refs/heads/${branch}`
+  if(expectedSha&&(git(root,['rev-parse','--verify','HEAD^{commit}'])!==expectedSha||git(root,['rev-parse','--verify',ref])!==expectedSha))throw Error('matter_parallel_not_ready')
+  const source=expectedSha??ref
+  if (ancestor(source, 'HEAD')) return { merged: false, into }
+  if (!ancestor('HEAD', source)) throw new Error('worktree_not_ff')
+  git(repoRoot, ['merge', '--ff-only', '--no-edit', source], owner)
   return { merged: true, into }
 }
 

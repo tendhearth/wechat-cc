@@ -23,12 +23,12 @@ function batonArtifacts(ctx:ServiceCtx,id:string,since:number,latest?:Active['le
 export function finishLedger(ctx:ServiceCtx,running:Active,status:string):void {
   const {store}=ctx,id=running.taskId
   if(!store.ledger.enabled(id))return
-  const baton=running.ledgerRunId??running.identity
+  const baton=running.ledgerRunId??running.identity,root=store.plans.root(id)
   const replies=store.steps(id).filter(s=>timelineKind(s)==='text'&&stepPayload(s).runId===running.identity)
   const reply=replies.at(-1)
   const since=store.execution.run(id,baton)?.createdAt??Infinity
-  store.ledger.artifact(id,baton,running.task.providerId,{workspace:running.path,...batonArtifacts(ctx,id,since,running.ledgerArtifact)})
-  store.ledger.finish(id,baton,status,reply?stepPayload(reply).text:'',running.turn?.id)
+  store.ledger.artifact(root,baton,running.task.providerId,{workspace:running.path,...batonArtifacts(ctx,id,since,running.ledgerArtifact)})
+  store.ledger.finish(root,baton,status,reply?stepPayload(reply).text:'',running.turn?.id)
 }
 
 /** First handoff only: derive the first baton from existing task records, never its transcript. */

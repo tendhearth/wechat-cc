@@ -1,3 +1,4 @@
+import {makeParallelDomain} from './service/parallel'
 import {makeRelayDomain} from './service/relay'
 import type {RelayTurnHook} from './service/relay-events'
 import {trackPreparation} from './service/state'
@@ -252,8 +253,9 @@ export function makeWorkbenchService(opts: Options) {
     quota: quotaDomain,
     scripts: scriptsDomain,
   })
-  const ledgerDomain=makeLedgerDomain(ctx,{execute:executeDomain,lifecycle:lifecycleDomain,admission:admissionDomain,entry:entryDomain,view:viewDomain})
-  const relayDomain=makeRelayDomain(ctx,{admission:admissionDomain,ledger:ledgerDomain})
+  const parallelDomain=makeParallelDomain(ctx,entryDomain)
+  const ledgerDomain=makeLedgerDomain(ctx,{execute:executeDomain,lifecycle:lifecycleDomain,admission:admissionDomain,entry:entryDomain,parallel:parallelDomain,view:viewDomain})
+  const relayDomain=makeRelayDomain(ctx,{admission:admissionDomain,ledger:ledgerDomain,parallel:parallelDomain,lifecycle:lifecycleDomain})
   const quotaHandoffDomain = makeQuotaHandoffDomain(ctx, { execute: executeDomain, quota: quotaDomain })
   const review = makeReviewDomain(ctx, {
     scripts: scriptsDomain,
@@ -273,6 +275,7 @@ export function makeWorkbenchService(opts: Options) {
   store.recover()
   store.plans.recover()
   store.liveInputs.recover()
+  parallelDomain.recoverReports()
   quarantineRestartContinuations(ctx)
   lifecycleDomain.adoptWriters()
   scriptsDomain.recover()
@@ -280,6 +283,7 @@ export function makeWorkbenchService(opts: Options) {
   quotaResumeDomain.recover()
   // 构造完成后才开续接，仍经过原生会话准入、网络门和文件夹写者租约。
   queueMicrotask(()=>recoverRestartContinuations(ctx,executeDomain))
+  relayDomain.recoverChoices()
   unsubscribes.add(opts.registry.onRegister(()=>recoverRestartContinuations(ctx,executeDomain)))
 
   function ensureAccepting() {
@@ -289,6 +293,7 @@ export function makeWorkbenchService(opts: Options) {
 
   const service={
     ...ledgerDomain,
+    retryPendingChoices:relayDomain.retryPendingChoices,
     waitingOpinion: (id: string) => opts.askOpinion?.get(id),
     rosterRelay:relayDomain.rosterRelay,
     rosterRead:viewDomain.rosterRead,
@@ -336,7 +341,7 @@ export function makeWorkbenchService(opts: Options) {
     discardAttachmentUpload:attachmentsDomain.discardAttachmentUpload,takeChatImages:attachmentsDomain.takeChatImages,
     readAttachment:attachmentsDomain.readAttachment,
     discardAttachment:attachmentsDomain.discardAttachment,
-    setArchived:(id:string,archived:boolean)=>{const view=lifecycleDomain.setArchived(id,archived);if(archived)worktreeDomain.tidyOnArchive(id);return view},
+    setArchived:(id:string,archived:boolean)=>{const view=lifecycleDomain.setArchived(id,archived);if(archived&&!store.plans.candidateForTask(id))worktreeDomain.tidyOnArchive(id);return view},
     confirmWriterExited:lifecycleDomain.confirmWriterExited,
     cancel:lifecycleDomain.cancel,
     suspendForNetwork:lifecycleDomain.suspendForNetwork,
@@ -358,7 +363,10 @@ export function makeWorkbenchService(opts: Options) {
     reviewComment:review.reviewComment,
     sendReviewComments:review.sendReviewComments,
     revertReviewHunk:review.revertReviewHunk,
-    worktreeAction:worktreeDomain.worktreeAction,
+    worktreeAction:(id:string,action:Parameters<typeof worktreeDomain.worktreeAction>[1],record?:Parameters<typeof parallelDomain.choose>[3])=>action==='merge'
+      ? parallelDomain.choose(id,sha=>worktreeDomain.merge(id,sha),relayDomain.afterChoice,record)
+      : worktreeDomain.worktreeAction(id,action),
+    parallelChoiceTask:parallelDomain.choiceTask,
     rewindPreview:rewindDomain.rewindPreview,
     rewind:rewindDomain.rewind,
     undoRewind:rewindDomain.undoRewind,

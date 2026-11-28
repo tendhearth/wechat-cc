@@ -205,3 +205,7 @@ wechat-cc cli acp remove my-agent
 
 写进 `agent-config.json` 的 `acp_agents`,**重启 daemon 后**出现在执行者里。命令找不到 / id 不合格 / 与内置执行者重名 ⇒ 开机跳过并记一行 `WORKBENCH` 日志。
 这些执行者不报调用目标,网络闸门按「需要保护」处理(fail closed)。能不能续接原会话取决于 agent 自己是否支持 ACP `session/load`。
+
+## 已知限制
+
+并行交办的各版使用同一 Git 仓库的独立工作区。记录本只向成员提供共同要求和自己的备注。成员在自己的目录里用 Git 仍可能翻到同仓库的其他分支。

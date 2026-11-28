@@ -24,8 +24,8 @@ function fixture(){
   store.addEvent(id,'text','已完成。',null,'dispatch',[],turn!)
   const running={taskId:id,identity:'dispatch',ledgerRunId:'first',directoryIdentity:directoryIdentity(path),turn:{id:turn!,open:false},turnSeq:1,cancelled:false,uncertain:false} as Active
   const notices:string[]=[],logs:string[]=[],handoff=vi.fn(async(_id:string,_executor:string,_brief:string,_automatic?:AutoRelayHandoff)=>({}))
-  const ctx={store,state,now:()=>Date.now(),ensureAccepting:()=>{},log:(_tag:string,text:string)=>logs.push(text),deps:{ownerChatId:()=>'owner',usage:()=>null,refusal:()=>null,executionConflict:()=>false,reports:{enqueueRelay:(_id:string,text:string)=>notices.push(text)}}} as unknown as ServiceCtx
-  const relay=makeRelayDomain(ctx,{admission:{provider:()=>({}),requireEntryInput:()=>{}} as unknown as AdmissionDomain,ledger:{matterHandoff:handoff} as unknown as ReturnType<typeof makeLedgerDomain>})
+  const ctx={store,state,hub:{bumped:()=>{}},now:()=>Date.now(),ensureAccepting:()=>{},log:(_tag:string,text:string)=>logs.push(text),deps:{ownerChatId:()=>'owner',usage:()=>null,refusal:()=>null,executionConflict:()=>false,reports:{enqueueRelay:(_id:string,text:string)=>notices.push(text)}}} as unknown as ServiceCtx
+  const relay=makeRelayDomain(ctx,{admission:{provider:()=>({}),requireEntryInput:()=>{}} as unknown as AdmissionDomain,parallel:{afterTurn:()=>false} as never,lifecycle:{} as never,ledger:{matterHandoff:handoff} as unknown as ReturnType<typeof makeLedgerDomain>})
   return {id,db,store,running,notices,logs,handoff,relay}
 }
 

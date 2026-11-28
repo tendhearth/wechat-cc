@@ -47,7 +47,16 @@ export function makeWorktreeDomain(ctx: ServiceCtx, domains: WorktreeDomains) {
     }
     return { task, wt }
   }
+  function merge(id:string,expectedSha?:string):WorktreeActionResult{
+    assertNotRewindBlocked(store.rewinds,id)
+    const {wt}=target(id,'merge')
+    const result=mergeWorktree(wt.repoRoot,wt.root,wt.branch,expectedSha)
+    if(result.merged)store.worktrees.markMerged(id)
+    store.addEvent(id,'system',result.merged?`分支 ${wt.branch} 已快进合并到项目的 ${result.into}。`:`分支 ${wt.branch} 上没有项目里还没有的提交，不用合。`)
+    return {branch:wt.branch,merged:result.merged,into:result.into}
+  }
   const domain = {
+    merge,
     async worktreeAction(id: string, action: Action): Promise<WorktreeActionResult> {
       if (action !== 'commit' && action !== 'remove' && action !== 'merge' && action !== 'reopen') throw new Error('invalid_request')
       // 回退停住 / 开机还没对完账:工作区可能是半切换的,提交 / 合回 / 删都不做(评审 #433-4)
@@ -69,7 +78,8 @@ export function makeWorktreeDomain(ctx: ServiceCtx, domains: WorktreeDomains) {
         domains.scripts?.afterCheckout(id)
         return { branch: wt.branch, reopened: true }
       })())
-      const { task, wt } = target(id, action as Exclude<Action, 'reopen'>)
+      if (action === 'merge') return merge(id)
+      const { task, wt } = target(id, action)
       if (action === 'commit') {
         const result = commitWorktree(wt.root, task.title)
         const hint = mergeHint(wt.projectPath, wt.branch)
@@ -77,13 +87,6 @@ export function makeWorktreeDomain(ctx: ServiceCtx, domains: WorktreeDomains) {
         if (result.committed) store.worktrees.clearMerged(id)
         store.addEvent(id, 'system', result.committed ? `已提交到分支 ${wt.branch}（${result.sha.slice(0, 7)}）。可以「合回项目」，或在项目目录里执行 git merge ${wt.branch}。` : `分支 ${wt.branch} 上没有新的改动要提交。`)
         return { branch: wt.branch, committed: result.committed, sha: result.sha, mergeHint: hint }
-      }
-      if (action === 'merge') {
-        const result = mergeWorktree(wt.repoRoot, wt.root, wt.branch)
-        // 「已合回」只在真快进了才记;分支没有新提交(刚开 / 主人自己合过)分不清,不记(2026-10-08 评审)
-        if (result.merged) store.worktrees.markMerged(id)
-        store.addEvent(id, 'system', result.merged ? `分支 ${wt.branch} 已快进合并到项目的 ${result.into}。` : `分支 ${wt.branch} 上没有项目里还没有的提交，不用合。`)
-        return { branch: wt.branch, merged: result.merged, into: result.into }
       }
       const finish = () => {
         removeWorktree(wt.repoRoot, wt.root)
