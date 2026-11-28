@@ -822,9 +822,11 @@ async function merge(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> 
     // 树放到合进去的那条上,merge.sha 读的是树自己的 HEAD —— deploy 断言的就是这两者一致。
     // 经合并队列合的:放到**这个 PR 的合入提交**上(队列同批可能还快进了别人的,顶端不是这一个),先核它确实在 base 上。
     git(d, dir, ['fetch', 'origin', d.config.branch], { timeoutMs: NETWORK_TIMEOUT_MS })
-    const onBase = !!landed.mergeSha && d.git.run(['merge-base', '--is-ancestor', landed.mergeSha, `origin/${d.config.branch}`], { cwd: dir }).code === 0
-    if (landed.mergeSha && !onBase) d.log(`[self-change] 合入提交 ${landed.mergeSha.slice(0, 8)} 不在 origin/${d.config.branch} 上,退回用顶端`)
-    git(d, dir, ['checkout', '-q', '--detach', onBase ? landed.mergeSha! : `origin/${d.config.branch}`])
+    // 核不到(不在 base 上、git 出错)⇒ 停下来不部署:代码已经在 base 上了,但部署哪一条不能猜(#1119 复审)。
+    if (landed.mergeSha && d.git.run(['merge-base', '--is-ancestor', landed.mergeSha, `origin/${d.config.branch}`], { cwd: dir }).code !== 0) {
+      return { ok: false, fail: 'merge_failed', detail: `PR #${pr.number} 已合进 ${d.config.branch},但核不到合入提交 ${landed.mergeSha.slice(0, 8)} 在 origin/${d.config.branch} 上:不部署,人看一眼` }
+    }
+    git(d, dir, ['checkout', '-q', '--detach', landed.mergeSha ?? `origin/${d.config.branch}`])
     const head = git(d, dir, ['rev-parse', 'HEAD']).trim()
     s.merge.sha = head
     // 合入的树和 CI 跑的树一样吗?不一样 = 等拍板期间 dev 上多了别人的提交。

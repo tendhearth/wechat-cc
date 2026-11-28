@@ -92,7 +92,8 @@ function fakeDeps(script: {
   /** gh pr merge 报网络错、但其实已经合了的 PR。 */
   mergedDespiteError?: number[]
   /** 合并队列:进队列后第几次查状态时合进去;'dequeue' ⇒ 被踢出来;'move' ⇒ head 被人推了。 */
-  queue?: { mergeAfterPolls?: number; outcome?: 'merge' | 'dequeue' | 'move' | 'merged-other-head' | 'auto-only'; noRule?: boolean; preEnqueued?: number[] }
+  queue?: { mergeAfterPolls?: number; outcome?: 'merge' | 'dequeue' | 'move' | 'merged-other-head' | 'auto-only'; noRule?: boolean; preEnqueued?: number[]
+    /** 这个 head 上 ci · gate 的结论;otherRed = 另一条非必过检查红了。 */ gate?: string; otherRed?: boolean; noMergeCommitPolls?: number }
 }) {
   const calls: string[] = []
   let viewIdx = 0
@@ -133,7 +134,13 @@ function fakeDeps(script: {
           else if (outcome === 'move') headRefOid = 'someone-else'
         }
       }
-      return r(JSON.stringify({ data: { repository: { pullRequest: { state, headRefOid, isInMergeQueue: inQueue, autoMergeRequest: auto ? { enabledAt: 'x' } : null, mergeCommit } } } }))
+      if (mergeCommit && (q.noMergeCommitPolls ?? 0) > 0) { q.noMergeCommitPolls!--; mergeCommit = null }
+      const contexts = [
+        ...(q.gate ? [{ name: 'ci · gate', status: 'COMPLETED', conclusion: q.gate }] : []),
+        ...(q.otherRed ? [{ name: 'some other check', status: 'COMPLETED', conclusion: 'FAILURE' }] : []),
+      ]
+      return r(JSON.stringify({ data: { repository: { pullRequest: { state, headRefOid, baseRefName: 'dev', isInMergeQueue: inQueue, autoMergeRequest: auto ? { enabledAt: 'x' } : null, mergeCommit,
+        commits: { nodes: [{ commit: { oid: headRefOid, statusCheckRollup: { contexts: { nodes: contexts } } } }] } } } } }))
     }
     if (line.startsWith('gh api repos/{owner}/{repo}/rules/branches/')) {
       return r(JSON.stringify(script.queue?.noRule ? [{ type: 'pull_request' }] : [{ type: 'merge_queue' }, { type: 'required_status_checks' }]))
@@ -246,17 +253,19 @@ describe('runCiLand —— 合并队列', () => {
     expect(res.exitCode).toBe(CI_LAND_EXIT.red)
     expect(calls.some(c => c.startsWith('gh pr merge'))).toBe(false)
   })
-  it('叠起来的两层:下层进队列合了,上层 rebase 到 dev、先改 base 再推(推送那一轮才对着 dev 跑),再用新 head 进队列', async () => {
+  it('叠起来的两层:下层进队列合了,上层 rebase 到 dev、先推后改 base(推失败时 base 没动,能接上),关了再开让 CI 对着 dev 跑,再用新 head 进队列', async () => {
     const stack = [pr(1, 'dev', 'a', 'sa', false), pr(2, 'a', 'b', 'sb', false)]
     const { deps, calls } = fakeDeps({ open: stack, views: [linuxOnly('sb')] })
     const res = await runCiLand(deps, { top: 2, skipTypecheck: true, queue: true })
     expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
     expect(res.merged).toEqual([1, 2])
-    expect(calls.filter(c => /rebase --onto|push|pr edit|pr merge/.test(c))).toEqual([
+    expect(calls.filter(c => /rebase --onto|push|pr edit|pr merge|pr close|pr reopen/.test(c))).toEqual([
       'gh pr merge 1 --auto --match-head-commit sa',
       'git rebase --onto origin/dev sa',
-      'gh pr edit 2 --base dev',
       'git push --no-verify --force-with-lease=b:sb origin HEAD:refs/heads/b',
+      'gh pr edit 2 --base dev',
+      'gh pr close 2',
+      'gh pr reopen 2',
       'gh pr merge 2 --auto --match-head-commit sb-rebased',
     ])
   })
@@ -279,12 +288,24 @@ describe('runCiLand —— 合并队列', () => {
     expect(res.exitCode).toBe(CI_LAND_EXIT.moved)
     expect(res.message).toContain('人看一眼')
   })
-  it('开着自动合并在等 PR 自己的检查、检查红了 ⇒ 当场 red,不干等到总超时', async () => {
-    const red = linuxOnly('sx'); red.statusCheckRollup[1] = { name: 'build · ubuntu-latest', status: 'COMPLETED', conclusion: 'FAILURE' }
-    const { deps } = fakeDeps({ open: one, views: [linuxOnly('sx'), red], queue: { outcome: 'auto-only', mergeAfterPolls: 99 } })
+  it('开着自动合并在等 PR 自己的检查、ci · gate 红了 ⇒ 当场 red 并说自动合并还开着', async () => {
+    const { deps } = fakeDeps({ open: one, views: [linuxOnly('sx')], queue: { outcome: 'auto-only', mergeAfterPolls: 99, gate: 'FAILURE' } })
     const res = await runCiLand(deps, { top: 7, skipTypecheck: true, queue: true, timeoutMin: 600 })
     expect(res.exitCode).toBe(CI_LAND_EXIT.red)
-    expect(res.message).toContain('build · ubuntu-latest')
+    expect(res.message).toContain('ci · gate')
+    expect(res.message).toContain('自动合并还开着')
+  })
+  it('别的非必过检查红了不算(不挡队列),照旧等', async () => {
+    const { deps } = fakeDeps({ open: one, views: [linuxOnly('sx')], queue: { outcome: 'auto-only', mergeAfterPolls: 99, gate: 'SUCCESS', otherRed: true } })
+    const res = await runCiLand(deps, { top: 7, skipTypecheck: true, queue: true, timeoutMin: 30 })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.timeout)
+    expect(res.message).toContain('开着自动合并')
+  })
+  it('合进去了但合入提交晚几秒才出现 ⇒ 再问几次拿到它', async () => {
+    const { deps } = fakeDeps({ open: one, views: [linuxOnly('sx')], queue: { noMergeCommitPolls: 2 } })
+    const res = await runCiLand(deps, { top: 7, skipTypecheck: true, queue: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
+    expect(res.mergeSha).toBe('d0+7')
   })
   it('合完返回这一层的合入提交(给自改部署用)', async () => {
     const { deps } = fakeDeps({ open: one, views: [linuxOnly('sx')] })

@@ -10,7 +10,7 @@
  * 接口单独拎出来是为了 run.integration.test.ts:它的远端是本地裸仓库,没有 GitHub,塞一个「本地 squash」的假件,
  * 照样验 worktree / 分支 / 两条运行互不影响那些 git 上的事。
  */
-import { runCiLand, type CiLandDeps } from '../ci-land'
+import { CI_LAND_EXIT, hasMergeQueueRule, runCiLand, type CiLandDeps } from '../ci-land'
 
 export interface PrRef { number: number; url: string }
 
@@ -54,8 +54,13 @@ export function ghForge(makeDeps: (cwd: string) => CiLandDeps): Forge {
       return { number: n, url }
     },
     async land(o) {
-      // dev 开着合并队列:PR 的 Linux CI + 队列里三平台那一轮,60 分钟不够宽裕。
-      const r = await runCiLand(makeDeps(o.cwd), { top: o.pr, target: o.base, minChecks: 1, timeoutMin: 90, queue: o.base === 'dev' })
+      // 走不走队列看 base 的有效规则,不看分支名:队列关掉时自改照旧能用老办法合(#1119 复审)。
+      // 开着队列:PR 的 Linux CI + 队列里三平台那一轮,60 分钟不够宽裕。
+      const deps = makeDeps(o.cwd)
+      const rules = deps.exec('gh', ['api', `repos/{owner}/{repo}/rules/branches/${o.base}`], { cwd: o.cwd, timeoutMs: 60_000 })
+      if (rules.code !== 0) return { exitCode: CI_LAND_EXIT.precondition, message: `查 ${o.base} 的规则失败:${rules.stderr.trim().slice(0, 200)}` }
+      const queue = hasMergeQueueRule(rules.stdout)
+      const r = await runCiLand(deps, { top: o.pr, target: o.base, minChecks: 1, timeoutMin: queue ? 90 : 60, queue })
       return { exitCode: r.exitCode, message: r.message, ...(r.mergeSha ? { mergeSha: r.mergeSha } : {}) }
     },
     async close(o) {

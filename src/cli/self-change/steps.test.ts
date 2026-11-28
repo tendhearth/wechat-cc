@@ -746,11 +746,13 @@ describe('merge', () => {
     expect(s.merge.sha).toBe(MERGE)
   })
 
-  it('合入提交不在 dev 上(不该发生)⇒ 退回 dev 顶端,记一笔', async () => {
+  it('合入提交核不到在 dev 上 ⇒ merge_failed、不部署,也不退回 dev 顶端', async () => {
     const MERGE = 'm'.repeat(40)
     const { deps, rec } = makeFakeDeps({ git: gitReply({ 'merge-base --is-ancestor': { code: 1 } }), forge: { land: async () => ({ exitCode: 0, message: 'x', mergeSha: MERGE }) } })
-    await steps.merge(fakeState({ pr: { number: 77, url: 'u' } }), deps)
-    expect(rec.git.map(a => a.join(' '))).toContain('checkout -q --detach origin/dev')
+    const out = await steps.merge(fakeState({ pr: { number: 77, url: 'u' } }), deps)
+    expect(out).toMatchObject({ ok: false, fail: 'merge_failed' })
+    expect(out.detail).toContain('不部署')
+    expect(rec.git.map(a => a.join(' ')).some(l => l.startsWith('checkout -q --detach origin/dev') || l.startsWith(`checkout -q --detach ${MERGE}`))).toBe(false)
   })
 
   it('老存盘没有 PR ⇒ 先补开一个再合', async () => {
