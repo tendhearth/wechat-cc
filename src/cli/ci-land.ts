@@ -289,6 +289,15 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
   if (mergedList.code !== 0) return done(CI_LAND_EXIT.precondition, `gh pr list --state merged 失败:${lastLine(mergedList)}`)
   let mergedPrs: MergedPr[]
   try { mergedPrs = JSON.parse(mergedList.stdout || '[]') as MergedPr[] } catch { return done(CI_LAND_EXIT.precondition, 'gh pr list --state merged 回的不是 JSON') }
+  // 上一次排进队列、在两次 ci land 之间已经被合掉的:照实报合了(带合入提交),不说「不是开着的 PR」。
+  if (!open.some(p => p.number === opts.top) && mergedPrs.some(p => p.number === opts.top)) {
+    const m = ghJson<{ baseRefName: string; mergeCommit: { oid: string } | null }>('pr', 'view', String(opts.top), '--json', 'baseRefName,mergeCommit')
+    if (m?.baseRefName === target) {
+      merged.push(opts.top)
+      const r = done(CI_LAND_EXIT.landed, `#${opts.top} 已经合进 ${target} 了(之前那次排的队)${m.mergeCommit ? `,合入 ${m.mergeCommit.oid.slice(0, 8)}` : ''}`)
+      return { ...r, ...(opts.queue ? { viaQueue: true } : {}), ...(m.mergeCommit ? { mergeSha: m.mergeCommit.oid } : {}) }
+    }
+  }
   let stack: Layer[]
   try { stack = resolveStack(opts.top, open, target, mergedPrs) } catch (e) { return done(CI_LAND_EXIT.precondition, (e as Error).message) }
   const topLayer = stack[stack.length - 1]!

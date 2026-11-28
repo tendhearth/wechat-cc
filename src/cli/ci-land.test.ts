@@ -153,6 +153,9 @@ function fakeDeps(script: {
       return r()
     }
     if (line.startsWith('git push') && script.netFailures?.push?.length) return r('', 128, script.netFailures.push.shift()!)
+    if (line.startsWith('gh pr view') && args.includes('baseRefName,mergeCommit')) {
+      return r(JSON.stringify({ baseRefName: 'dev', mergeCommit: { oid: 'merged-before' } }))
+    }
     if (line.startsWith('gh pr view') && args.includes('state')) {
       const n = Number(args[2])
       return r(JSON.stringify({ state: mergedNow.has(n) ? 'MERGED' : 'OPEN' }))
@@ -270,6 +273,12 @@ describe('runCiLand —— 合并队列', () => {
       'gh pr reopen 2',
       'gh pr merge 2 --auto --match-head-commit sb-rebased',
     ])
+  })
+  it('两次 ci land 之间已经被队列合掉了 ⇒ 报合了、带合入提交,不说「不是开着的 PR」', async () => {
+    const { deps, calls } = fakeDeps({ open: [], views: [], merged: [{ number: 7, headRefName: 'x', headRefOid: 'sx' }] })
+    const res = await runCiLand(deps, { top: 7, skipTypecheck: true, queue: true })
+    expect(res).toMatchObject({ exitCode: CI_LAND_EXIT.landed, merged: [7], mergeSha: 'merged-before', viaQueue: true })
+    expect(calls.some(c => c.startsWith('gh pr merge'))).toBe(false)
   })
   it('dev 没开合并队列 ⇒ 不猜,停下来说用 --direct', async () => {
     const { deps, calls } = fakeDeps({ open: one, views: [linuxOnly('sx')], queue: { noRule: true } })
