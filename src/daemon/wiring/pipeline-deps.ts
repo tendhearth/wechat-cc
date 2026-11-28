@@ -38,7 +38,7 @@ import { isAdmin, loadAccess, appendAllowFrom } from '../../lib/access'
 import { resolveTier } from '../../domain/user-tier'
 import type { PetTurnDep } from '../internal-api/types'
 import { makeAdminCommands } from '../admin-commands'
-import { makeSelfChangeSpawner, resolveSelfCli } from '../self-change-spawn'
+import { defaultSelfChangeSpawner } from '../self-change-spawn'
 import { makeModeCommands } from '../mode-commands'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import { makeThreadsStore } from '../../lib/threads-store'
@@ -63,7 +63,6 @@ import { socialState } from '../social-state'
 import { writeConfigKey } from '../config-surface'
 import { makeOpenaiModels } from '../openai-models'
 import { findOnPath } from '../../lib/util'
-import { isCompiledBundle } from '../../lib/runtime-info'
 import type { A2AAgentRecord } from '../../lib/agent-config'
 import { materializeAttachments } from '../media'
 import { makeFireMilestonesFor, makeMaybeWriteWelcomeObservation, makeRecordInbound } from './side-effects'
@@ -429,20 +428,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     },
     // 微信「自改 <需求>」的执行端(spec 2026-09-18)。流水线最后要部署 + 重启
     // 这个 daemon,所以只能 detached 起独立进程 —— 同 updateSelf 的理由。
-    selfChange: makeSelfChangeSpawner({
-      resolve: () => resolveSelfCli({
-        compiled: isCompiledBundle(),
-        execPath: process.execPath,
-        repoRoot: REPO_ROOT,
-        bunPath: findOnPath('bun'),
-        exists: existsSync,
-      }),
-      spawn,
-      env: process.env,
-      stateDir,
-      cwd: REPO_ROOT,
-      log: (line) => log('SELF_CHANGE', line),
-    }),
+    selfChange: defaultSelfChangeSpawner(stateDir, line => log('SELF_CHANGE', line)),
     updateSelf: async () => {
       if (!existsSync(CLI_ENTRY)) return { ok: false as const, reason: 'source_cli_not_found' }
       const bun = findOnPath('bun')

@@ -1,3 +1,5 @@
+import { isCompiledBundle } from '../../lib/runtime-info'
+import { hasRestartWork } from '../self-restart/wire'
 import { acpSupportedOn } from '../../adapters/executors/acp/platform'
 import { makeCliSetupReceipt } from '../cli-setup-receipt'
 import { makeCliSetup } from '../cli-setup'
@@ -134,6 +136,16 @@ export function internalApiModule(f: Foundation): DaemonModule<InternalApiLifecy
           }, input)
         },
         requestRestart: () => f.requestRestart('internal-api'),
+        deployReadiness: () => {
+          const b = boot()
+          return {
+            compiled: isCompiledBundle(), execPath: process.execPath, stateDir, parentPid: process.ppid, bootAt: f.bootAtIso,
+            idle: !!b && !f.isStopping?.() && !hasRestartWork({
+              anyInFlight: () => b.sessionManager.anyInFlight(),
+              busy: () => b.busyLabels().length > 0,
+            }),
+          }
+        },
         markInboundActivity: () => boot()?.markInboundActivity?.(),
         // busy-registry hold(spec 2026-08-11):bootstrap 之前什么都不会「忙」,给一个空的放手。
         holdBusy: (l) => boot()?.holdBusy?.(l) ?? (() => {}),

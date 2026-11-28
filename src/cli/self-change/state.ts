@@ -211,6 +211,44 @@ function createLockExclusive(fs: StateFs, file: string, pid: number, runId?: str
 }
 
 /**
+ * 自动部署只试一次，不回收自改锁或接管标记。即使持有者看起来已退出，
+ * 也由自改入口或维护者处理原锁。
+ */
+export function tryAutoshipLock(
+  stateDir: string, fs: StateFs = NODE_FS, isAlive: (pid: number) => boolean = defaultIsAlive,
+): { ok: true; release(): void } | { ok: false; reason: string } {
+  const dir = selfChangeDir(stateDir)
+  const file = join(dir, LOCK_FILE)
+  const steal = file + STEAL_SUFFIX
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+  function busy(path: string) {
+    const pid = readHolder(fs, path)
+    return {
+      ok: false as const,
+      reason: pid !== null && isAlive(pid)
+        ? `自改锁正在使用（PID ${pid}），本轮跳过。`
+        : `自改锁残留（${path}），本轮跳过。请核对持有者后处理。`,
+    }
+  }
+
+  if (fs.existsSync(steal)) return busy(steal)
+  try { createLockExclusive(fs, file, process.pid, 'autoship') }
+  catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+    return busy(file)
+  }
+  const release = () => {
+    if (readHolder(fs, file) === process.pid) fs.unlinkSync(file)
+  }
+  // 接管者可能在第一次检查之后才建立标记。放弃，交给正在接管的一方。
+  if (fs.existsSync(steal)) {
+    release()
+    return busy(steal)
+  }
+  return { ok: true, release }
+}
+
+/**
  * 「一次只跑一条」的锁。文件里写着持有者的 pid:
  *  · 没人持有 ⇒ 拿到
  *  · 持有者还活着 ⇒ 拒绝,把 pid 报给调用方(`self_change_busy`)

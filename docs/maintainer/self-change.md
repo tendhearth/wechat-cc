@@ -235,12 +235,15 @@ wechat-cc self change --unhalt     # 清 halted_at / halt_reason,fail_streak 归
 
 `halted_at` / `halt_reason` / `fail_streak` 也在这块里,由流水线自己写,人只用 `--unhalt` 碰。
 
+自动部署和自改共用中枢克隆与互斥锁，各自记录故障和停机状态。用法与退出码见 [合完自动部署](deploy.md#合完自动部署)。
+
 ## 文件都在哪儿
 
 | 东西 | 位置 |
 | --- | --- |
 | 每条自改的存盘 | `$STATE_DIR/self-change/<id>.json`(缺省 `~/.claude/channels/wechat/self-change/`,0600 —— 里面有需求原文和会话 id) |
 | 「一次只跑一条」的锁 | `$STATE_DIR/self-change/lock`(写着持有者 pid 和在跑哪条 `runId`;持有者死了会被下一条抢过来) |
+| 部署事务锁 | `~/.wechat-cc-self-deploy.lock`，部署、自检和回滚共用。争锁时可待部署结束后恢复自改。 |
 | 中枢克隆(只 fetch / 管工作树) | `<workdir>/repo`,缺省 `~/Library/Caches/wechat-cc/self-change/repo` |
 | 每条运行自己的工作树 | `<workdir>/runs/<id>`(`done` / `declined` / `abandoned` 满 24 小时后由下一条运行顺手删;`--abandon <id>` 当场删) |
 | 给执行者的那份交代 | `<workdir>/briefs/<id>.md` |

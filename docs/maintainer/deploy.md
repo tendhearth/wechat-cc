@@ -61,6 +61,36 @@ wechat-cc self deploy --json     # 机器可读
 
 自改流水线的 deploy 步过的是同一道门:机器忙最多等一个小时,还忙就 `machine_busy`;守护不安全就 `network_unprotected`。两种都停在 deploy、不推 `fail_streak`,`--resume` 接着来。
 
+## 合完自动部署
+
+维护用 macOS 可以在 `dev` 的 CI 通过后自动部署，默认关闭。在源码工作区运行 `wechat-cc self autoship --enable` 会记下仓库地址。打包版也可从 `self_change.repo_url` 或已有中枢仓库查到地址。自动轮需要 `git`、`gh`、`bun` 和 `rustc`，以及访问仓库和 GitHub Actions 的权限。
+
+- `wechat-cc self autoship --disable` 关闭自动部署，已启动的轮次会在备份与换盘前的最终复核中重读开关。
+- `wechat-cc self autoship --status` 显示上次有效结论、当前跳过原因、暂停原因、未完成事务与停机状态。窗外另显示下次窗口。
+- 独立配置文件为 `$STATE_DIR/self-change/autoship-config.json`，由 CLI 原子写入，权限为 0600。`auto_ship_interval_min` 缺省 20 分钟，最短 5 分钟。时间窗缺省为本地时间 01:00–07:00，含起点、不含终点。用 `"auto_ship_window": {"start": "22:30", "end": "04:15"}` 可配置跨午夜窗口。手动 `self ship` 全天可用。daemon 每分钟重读配置。上一个 detached CLI 活着时，定时器继续等它退出。`wechat-cc self autoship` 的部署轮由 daemon 拉起，终端可直接运行带管理选项的命令。
+
+每轮只尝试拿一次自改的中枢互斥锁，再尝试部署锁。遇到活跃的自改锁、残留的锁或接管标记，只跳过并在 `--status` 记录原因。准备失败也会暂停并通知一次，例如中枢 `origin` 与配置不符、建不了工作树或工作树有改动。修复后用 `--unhalt` 恢复。短暂 fetch 失败留给下一轮重试。
+
+只有发起轮次的打包 daemon 与已加载的日用 LaunchAgent 匹配时才继续。CLI 通过本地 API 验证 PID、启动时间、状态目录和 sidecar 路径，再核对 LaunchAgent 的启动程序和当前 PID。源码和独立实例的跳过原因记在状态里。
+
+自动轮 fetch `origin/dev` 后，要求已装 sidecar 的提交能确认为它的祖先。已是顶端、tree 相同或只有 Markdown 差异时结束。候选 SHA 必须有已绿的 dev 推送轮，包含 CI 明确复用队列回执的轻量轮。CI 红按 SHA 只尝试通知一次。部署失败记录包含 Git tree 和忽略 Markdown 后的内容指纹，相同 tree 或只改 Markdown 的候选继续跳过。自改部署相关失败，以及已知构建来源的手动 ship 自检或换盘后的健康、插件、拉消息门失败，共享该记录。账本故障使自动轮暂停并报告原因，部署结果、失败计数及通知照常处理。`--unhalt` 保留有效账本，遇到损坏内容时备份原文件后重建。
+
+构建使用 `<workdir>/autoship` 中钉住候选 SHA 的工作树。负载、网络守护、交办门放行后运行 `bun install --frozen-lockfile` 并构建。签完暂存产物后，在备份与换盘前做最终复核。先核对远端 dev 顶端、工作树和已装版本。临门 fetch 上限为 25 秒，刷新失败或远端顶端变化时放弃本轮。再检查交办和负载，查询发起轮次的 daemon 有无在途会话、后台工作或关机，并确认网络守护放行。CLI 最后重读开关和时间窗。复核拒绝时清理暂存文件，安装文件和 `.prev` 保持原样，重启次数为零。复核通过后备份、换盘、重签整包并重启，再跑健康门和自检。
+
+换盘后，打包 daemon 的自重启定时器可能先发现 inode 变化并由 launchd 拉起新版。结果同样是新版在运行，部署健康门和自检照常执行。
+
+构建、部署或自检失败经 daemon 向主人尝试通知，带 SHA、阶段、回滚结果和当前版本。连续两次此类故障停机，成功或 `--unhalt` 清零。上次有效结论写入 `autoship.json`，当前跳过写入 `autoship-skip.json`，停机与计数写入 `autoship-state.json`，均在 `$STATE_DIR/self-change/`，原子写、0600。自改停机单独解除。`self change --no-deploy` 只限制这条自改，合入的提交仍可能被自动部署。
+
+### 已知限制
+
+- 评审 7：构建产物与健康门还没有用完整目标 SHA 做强绑定。
+- 最终就绪查询是一次快照。从夜间时间窗内复核通过到 launchd 执行重启，仍有备份、换盘和整包重签的间隔。在这段夜间部署窗口里，daemon 仍可能收到新工作或开始关机，配置也可能变化。临近窗口终点放行的轮次可能在终点之后完成重启。
+- 自改入口自己的 PID 锁仍沿用既有回收方式。`--unhalt` 只取部署锁。自改锁或 `lock.steal` 残留需要另行确认处理。
+- 部署 CLI 被强制终止时，SQLite 锁由操作系统释放，已启动的系统命令可能短暂继续。已经进入换盘阶段的事务会留档，需要检查安装和备份。
+- 评审 11：通知去重先落盘，当前没有待投通知账和补投。
+- 评审 12：不同克隆对旧 sidecar 的短 SHA 可能有不同解释。
+- 直接手动运行 `self deploy` 时，CLI 无法确认二进制的构建来源。健康门失败会走部署自身的回滚流程，共享部署失败账本不记这次失败，同一构建内容仍可能被自动轮选中。
+
 ## 部署完稳不稳:`wechat-cc self soak`(2026-10-23)
 
 以前「部署后跑满一整天才合下一步」,大半是空等。现在看信号:从日志里最后一次 self deploy 的重启算起,有没有意外重启、`[MODULES]` 失败 / 降级、`uncaughtException`、开机失败、关机被迫退出;健康接口上子系统、心跳、拉消息是不是都好。够时长(缺省 4 小时)且干净 ⇒ 退 0;有异常 ⇒ 退 1;还不够时长 ⇒ 退 2。只读。
@@ -74,7 +104,7 @@ wechat-cc self deploy --json     # 机器可读
 公司的 `Developer ID Application: Nate Gu & Co LLC (9Y6JAPDP7A)` 证书到手之后,`self deploy` 在本机钥匙串里探到它(`security find-identity -v -p codesigning`)就多做两步,否则一切照旧(build-sidecar 打的 ad-hoc):
 
 - **sign**(stage 之后、backup 之前):`codesign --force --sign <证书 SHA-1> --options runtime --entitlements apps/desktop/src-tauri/entitlements.plist --identifier com.tendhearth.wechat-cc.cli <sidecar>.new`,签完**再探一次** `--version`。bun 编译出来的 sidecar 是 JIT 运行时,hardened runtime 下缺 entitlement 会被内核直接 SIGKILL、一行日志都没有 —— 所以这一探必须发生在换活之前:死了就退 1,现场一个字节没动、`.prev` 也没写。`--sign` 给的是 SHA-1 不是名字:换证书那阵子新旧两张同名同时有效,按名字签 codesign 会报 ambiguous。装的就是 `.prev` 自己(回滚配方)时**跳过**这一步:它已经活过,再签只会给回滚多开失败路。
-- **seal**(swap 之后、kickstart 之前):对整个 `.app` 再 `codesign --force --sign <证书 SHA-1> --options runtime --entitlements …`(不 `--deep`,跟 CI 里 tauri 一样;`.app` 里其它二进制各带各的签名)。失败 = **部署没发生**:这时还没 kickstart、老 daemon 一次都没被打断,于是把 `.prev` 的字节换回来(`restore_swap`)、再重封一次(`restore_seal`,记录、不致命),不重启,退 1;`--no-rollback` 也一样(那个开关只管健康门之后的事,不该让一个没验过的 sidecar 留在盘上等下一次主进程拉起)。健康门失败走的回滚换回 `.prev` 之后同样重封一次(`rollback_seal`)。
+- **seal**(swap 之后、kickstart 之前)会用 `codesign --force --sign <证书 SHA-1> --options runtime --entitlements …` 重签整个 `.app`，沿用 CI 的 Tauri 签法，包内其它二进制各带自己的签名。首次重签失败时，CLI 尝试换回 `.prev`（`restore_swap`）并再次重签（`restore_seal`），记录结果并退出 1，期间不会发出 kickstart。`--no-rollback` 只控制健康门阶段的回滚。健康门失败时，换回 `.prev` 后同样会重签（`rollback_seal`）。
 
 **为什么要重封 .app 而不只签 sidecar**:TCC 把「完全磁盘访问」这类授权记在责任进程(主二进制,plist 指的那个)的**指定要求**上。ad-hoc 签名的指定要求是一串 cdhash,`tauri build` 一次就变一次;Developer ID 的是「identifier + team」,重建、换 sidecar 都不变。权限间歇掉的根因在这,不在 sidecar。
 
@@ -86,11 +116,13 @@ wechat-cc self deploy --json     # 机器可读
 
 **不签却往 Developer ID 封好的包里换 ⇒ 拒绝**(2026-10-10):不签时先 `codesign -dv` 看一眼 .app,带 TeamIdentifier ⇒ `signing` 步骤失败、什么都不动(09-28 事故:ad-hoc sidecar 塞进 DevID 包,TCC 框把 daemon 堵死)。从 `.prev` 回滚不拦;确实要换就加 `--allow-unsigned`。
 
-**部署锁**:整次部署持状态目录里的 `self-deploy.lock`(写 pid;进程没了就接过来)。另一次部署在跑 ⇒ `lock` 步骤失败退出 1 —— 两次同时跑会抢同一个 `.new`,后一次还会把前一次刚换上、没过健康门的二进制拷成 `.prev`。
+**部署锁**位于 `~/.wechat-cc-self-deploy.lock.sqlite`。手动 ship、手动 deploy、自改和自动轮共用 SQLite 独占事务，持到健康门、自检或回滚结束。内层部署复用已持的锁。进程退出时系统释放锁，SQLite 文件保留。手动 deploy 和 ship 争锁退出 1，自动轮争锁退出 2。重启命令限时 30 秒，诊断查询限时 5 秒。
+
+**部署事务记录**与锁文件相邻（后缀 `.transaction.json`）。原子更新备份后、换盘之前写入新旧版本、目标 sidecar、备份位置和开始时间。自动轮同时记录完整目标 SHA。日用状态目录中的旧 `autoship-transaction.json` 也会被读取。发现遗留记录时，所有前进部署都会拒绝，自动轮停机并尝试通知。可以用源码 CLI `bun cli.ts self deploy --binary <记录中的备份>` 救援。核对现场后运行 `self autoship --unhalt` 确认清理，救援回滚本身保留记录。正常部署通过健康门、外层自检全绿或确认自动回滚后会结清自己的事务。自改若从中断的 `selftest` 恢复，会先检查记录并停在原步骤。手动验收或回滚并确认事务后，可用 `self change --abandon <id>` 归档这条已合入的自改。
 
 ## 回滚别把备份吃了(2026-09-18 复审)
 
-`wechat-cc self deploy --binary <sidecar>.prev` 现在是**安全**的,以前不是:那时 backup 跑在 swap 前面,于是这条命令先把**当前那个坏的** sidecar 拷成 `.prev`(好的字节当场没了),再把「新二进制」= 已经变坏的 `.prev` 装回去 —— 一条命令同时毁掉备份和现场。
+`bun cli.ts self deploy --binary <sidecar>.prev` 从源码工作区安装备份。早期实现会先把当前坏掉的 sidecar 复制到 `.prev`，再把这份坏文件装回去，同时毁掉备份和现场。
 
 现在 stage 先把要装的字节拷到 `<sidecar>.new`(新 inode)再动别的,并且上面 backup 那两条豁免保证 `.prev` 不会被坏二进制盖掉。
 
@@ -121,13 +153,13 @@ tail -40 "$(plutil -extract StandardErrorPath raw ~/Library/LaunchAgents/com.wec
 ls -l ~/.claude/channels/wechat/internal-api-info.json    # mtime 没更新 = 这次没起来
 ```
 
-`runs` 每隔几秒 +1 就是崩溃循环;先看 `last exit reason`(`OS_REASON_CODESIGNING` ⇒ 十有八九是上面的 inode)。回滚就一条:
+`runs` 每隔几秒 +1 就是崩溃循环，先看 `last exit reason`（`OS_REASON_CODESIGNING` 通常指向上面的 inode 问题）。在带有 `apps/desktop/src-tauri/entitlements.plist` 的源码工作区运行下面的救援命令。
 
 ```bash
-wechat-cc self deploy --binary /path/to/wechat-cc.app/Contents/MacOS/wechat-cc-cli.prev
+bun cli.ts self deploy --binary /path/to/wechat-cc.app/Contents/MacOS/wechat-cc-cli.prev
 ```
 
-这条命令会跳过 backup(见上一节),`.prev` 原封不动 —— 可以放心重复跑。手工兜底就按上面的 copy+rename 换回去。
+这条命令保留 `.prev`。Developer ID 包救援时，检查 `seal` 步骤成功。打包 CLI 可能找不到 entitlement，跳过重签后仍尝试重启。若重签失败或未执行，先用可用的 Developer ID 签名身份和源码里的 entitlement 完成整包重签，再重启。手工换回备份时同样先用 copy+rename 换 inode，再完成所需的重签。
 
 ## plist 为什么指主二进制而不是 sidecar
 

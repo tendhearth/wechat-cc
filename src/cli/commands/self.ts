@@ -6,6 +6,7 @@ import { loadAgentConfig } from '../../lib/agent-config'
 import { compiledRepoRoot, isCompiledBundle } from '../../lib/runtime-info'
 import { parseTimeoutMsFlag, parseBudgetUsdFlag } from '../flags'
 // 源码模式下的仓库根:原来这段代码住在根 cli.ts 里,用 import.meta.url 就是仓库根;搬家后统一从 repo-root 取。
+import { AUTOSHIP_EXIT_HELP } from '../self-autoship'
 import { SOURCE_REPO_ROOT } from '../repo-root'
 // ── self deploy — atomic sidecar swap + launchd restart + health gate ──
 //
@@ -54,81 +55,103 @@ const selfDeployCmd = defineCommand({
 
     const repoRoot = compiledRepoRoot() ?? SOURCE_REPO_ROOT
     const homeDir = homedir()
-    const plistPath = join(homeDir, 'Library', 'LaunchAgents', 'com.wechat-cc.daemon.plist')
-    const plistXml = existsSync(plistPath) ? readFileSync(plistPath, 'utf8') : null
-    const uid = typeof process.getuid === 'function' ? process.getuid() : 501
-    const healthTimeout = parseTimeoutMsFlag(args['health-timeout-ms'])
-    if (!healthTimeout.ok) {
-      const message = `--health-timeout-ms ${healthTimeout.error}`
-      if (json) console.log(JSON.stringify({ ok: false, exitCode: 1, error: 'invalid_health_timeout_ms', message }, null, 2))
-      else console.error(`self deploy: ${message}`)
-      process.exit(1)
+    const { acquireDeploymentLock, DEPLOYMENT_BUSY, deploymentLockPath, deploymentTransactions, sameDeploymentPath } = await import('../deployment-transaction')
+    const held = acquireDeploymentLock(homeDir)
+    if ('busy' in held) {
+      const detail = DEPLOYMENT_BUSY
+      if (json) console.log(JSON.stringify({ ok: false, exitCode: 1, steps: [{ name: 'lock', ok: false, detail }] }))
+      else console.error(detail)
+      process.exitCode = 1
       return
     }
 
-    // 签名:本机钥匙串里有 Developer ID 就用它重签(见 self-deploy.ts 文件头);
-    // `--no-sign` 关掉。citty/mri 对 `--no-sign` 的处理与 `--no-rollback` 同一套
-    // (boolean 取反落到 `sign:false`),两种拼法都认。
-    const deps = defaultSelfDeployDeps({ waitTasks: Boolean(args['wait-tasks']), force: Boolean(args.force) })
-    const noSign = (args as Record<string, unknown>)['no-sign'] === true || (args as Record<string, unknown>).sign === false
-    const signing = resolveSigningInputs({ repoRoot, disabled: noSign, binaryPath: args.binary ?? null, spawnSync: deps.spawnSync, exists: existsSync })
-
-    let plan
     try {
-      plan = planSelfDeploy({
-        platform: process.platform,
-        arch: process.arch,
-        homeDir,
-        uid,
-        repoRoot,
-        stateDir: STATE_DIR,
-        plistXml,
-        binary: args.binary,
-        app: args.app,
-        healthTimeoutMs: healthTimeout.value,
-        // citty/mri turns `--no-rollback` into `rollback:false` (boolean
-        // negation) — the declared `'no-rollback'` key stays undefined, so
-        // reading only that key silently ignored the flag and deployed with
-        // rollback still armed. Accept both spellings.
-        rollback: !((args as Record<string, unknown>)['no-rollback'] === true || (args as Record<string, unknown>).rollback === false),
-        ...signing,
-        // 插件来源登记(2026-09-30):只在源码模式下有 checkout 可登记;打包版保留已有指针。
-        pluginSourceCandidates: compiled ? [] : pluginSourceCandidates(repoRoot, deps.spawnSync),
-        allowMissingPlugins: (args as Record<string, unknown>)['allow-missing-plugins'] === true || (args as Record<string, unknown>).allowMissingPlugins === true,
-        allowUnsigned: (args as Record<string, unknown>)['allow-unsigned'] === true || (args as Record<string, unknown>).allowUnsigned === true,
-        exists: existsSync,
-      })
-    } catch (err) {
-      const error = err instanceof Error ? err.message : String(err)
-      // planSelfDeploy() can itself throw self_deploy_unsupported_platform
-      // (defense in depth — the process.platform check above already
-      // short-circuits the normal path) — keep both paths agreeing on exit 2.
-      const exitCode = error === 'self_deploy_unsupported_platform' ? 2 : 1
-      const message = error === 'launchagent_not_app_bundle'
-        ? 'installed LaunchAgent does not point at an app bundle (looks like a dev-mode/source-checkout plist) — pass --app <path-to-.app> (e.g. "/Applications/Tendhearth CC.app") to target it explicitly'
-        : error === 'launchagent_stale'
-          ? 'installed LaunchAgent points at an app binary that no longer exists (the app was updated/renamed/moved) — open the app once (it repairs the LaunchAgent) or run `<app>/Contents/MacOS/tendhearth-cc-cli service repair`, then retry; or pass --app'
-          : error
-      if (json) console.log(JSON.stringify({ ok: false, exitCode, error, message }, null, 2))
-      else console.error(`self deploy: ${message}`)
-      process.exit(exitCode)
-      return
-    }
+      const pending = deploymentTransactions(deploymentLockPath(homeDir), STATE_DIR).pending()
+      if (pending && (!args.binary || !pending.transaction || !sameDeploymentPath(args.binary, pending.transaction.backupPath))) {
+        const step = { name: 'transaction', ok: false, detail: pending.message }
+        if (json) console.log(JSON.stringify({ ok: false, exitCode: 1, blocked: 'transaction', steps: [step] }))
+        else console.error(pending.message)
+        process.exitCode = 1
+        return
+      }
+      const plistPath = join(homeDir, 'Library', 'LaunchAgents', 'com.wechat-cc.daemon.plist')
+      const plistXml = existsSync(plistPath) ? readFileSync(plistPath, 'utf8') : null
+      const uid = typeof process.getuid === 'function' ? process.getuid() : 501
+      const healthTimeout = parseTimeoutMsFlag(args['health-timeout-ms'])
+      if (!healthTimeout.ok) {
+        const message = `--health-timeout-ms ${healthTimeout.error}`
+        if (json) console.log(JSON.stringify({ ok: false, exitCode: 1, error: 'invalid_health_timeout_ms', message }, null, 2))
+        else console.error(`self deploy: ${message}`)
+        process.exitCode = 1
+        return
+      }
 
-    const result = await executeSelfDeploy(plan, deps)
-    if (json) {
-      console.log(JSON.stringify(result, null, 2))
-    } else {
-      for (const step of result.steps) {
-        console.log(`${step.ok ? '✓' : '✗'} ${step.name}${step.detail ? ` — ${step.detail}` : ''}`)
+      // 签名:本机钥匙串里有 Developer ID 就用它重签(见 self-deploy.ts 文件头);
+      // `--no-sign` 关掉。citty/mri 对 `--no-sign` 的处理与 `--no-rollback` 同一套
+      // (boolean 取反落到 `sign:false`),两种拼法都认。
+      const deps = defaultSelfDeployDeps({ waitTasks: Boolean(args['wait-tasks']), force: Boolean(args.force) })
+      const noSign = (args as Record<string, unknown>)['no-sign'] === true || (args as Record<string, unknown>).sign === false
+      const signing = resolveSigningInputs({ repoRoot, disabled: noSign, binaryPath: args.binary ?? null, spawnSync: deps.spawnSync, exists: existsSync })
+
+      let plan
+      try {
+        plan = planSelfDeploy({
+          platform: process.platform,
+          arch: process.arch,
+          homeDir,
+          uid,
+          repoRoot,
+          stateDir: STATE_DIR,
+          plistXml,
+          binary: args.binary,
+          app: args.app,
+          healthTimeoutMs: healthTimeout.value,
+          // citty/mri turns `--no-rollback` into `rollback:false` (boolean
+          // negation) — the declared `'no-rollback'` key stays undefined, so
+          // reading only that key silently ignored the flag and deployed with
+          // rollback still armed. Accept both spellings.
+          rollback: !((args as Record<string, unknown>)['no-rollback'] === true || (args as Record<string, unknown>).rollback === false),
+          ...signing,
+          // 插件来源登记(2026-09-30):只在源码模式下有 checkout 可登记;打包版保留已有指针。
+          pluginSourceCandidates: compiled ? [] : pluginSourceCandidates(repoRoot, deps.spawnSync),
+          allowMissingPlugins: (args as Record<string, unknown>)['allow-missing-plugins'] === true || (args as Record<string, unknown>).allowMissingPlugins === true,
+          allowUnsigned: (args as Record<string, unknown>)['allow-unsigned'] === true || (args as Record<string, unknown>).allowUnsigned === true,
+          exists: existsSync,
+        })
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err)
+        // planSelfDeploy() can itself throw self_deploy_unsupported_platform
+        // (defense in depth — the process.platform check above already
+        // short-circuits the normal path) — keep both paths agreeing on exit 2.
+        const exitCode = error === 'self_deploy_unsupported_platform' ? 2 : 1
+        const message = error === 'launchagent_not_app_bundle'
+          ? 'installed LaunchAgent does not point at an app bundle (looks like a dev-mode/source-checkout plist) — pass --app <path-to-.app> (e.g. "/Applications/Tendhearth CC.app") to target it explicitly'
+          : error === 'launchagent_stale'
+            ? 'installed LaunchAgent points at an app binary that no longer exists (the app was updated/renamed/moved) — open the app once (it repairs the LaunchAgent) or run `<app>/Contents/MacOS/tendhearth-cc-cli service repair`, then retry; or pass --app'
+            : error
+        if (json) console.log(JSON.stringify({ ok: false, exitCode, error, message }, null, 2))
+        else console.error(`self deploy: ${message}`)
+        process.exitCode = exitCode
+        return
       }
-      if (result.ok) console.log(`✓ deployed${result.version ? ` (${result.version})` : ''}`)
-      else {
-        console.error(`✗ self deploy failed${result.rolledBack ? ' — rolled back to previous binary' : ''}`)
-        if (result.diagnostics) console.error(result.diagnostics)
+
+      const result = await executeSelfDeploy(plan, deps, held)
+      if (json) {
+        console.log(JSON.stringify(result, null, 2))
+      } else {
+        for (const step of result.steps) {
+          console.log(`${step.ok ? '✓' : '✗'} ${step.name}${step.detail ? ` — ${step.detail}` : ''}`)
+        }
+        if (result.ok) console.log(`✓ deployed${result.version ? ` (${result.version})` : ''}`)
+        else {
+          console.error(`✗ self deploy failed${result.rolledBack ? ' — rolled back to previous binary' : ''}`)
+          if (result.diagnostics) console.error(result.diagnostics)
+        }
       }
+      process.exitCode = result.exitCode
+    } finally {
+      held.release()
     }
-    process.exit(result.exitCode)
   },
 })
 
@@ -476,7 +499,7 @@ const selfShipCmd = defineCommand({
     force: { type: 'boolean', description: '列出交办任务后强制部署；重启打断的轮尝试续接一次' },
   },
   async run({ args }) {
-    const { runShip, SHIP_EXIT, DEFAULT_MAX_LOAD_PER_CPU } = await import('../self-ship')
+    const { SHIP_EXIT, DEFAULT_MAX_LOAD_PER_CPU } = await import('../self-ship')
     if (process.platform !== 'darwin' || isCompiledBundle()) {
       console.error('self ship: 只在 macOS 源码模式下跑(要在仓库里构建 sidecar);打包版用 self deploy --binary')
       process.exit(SHIP_EXIT.deploy_failed)
@@ -490,48 +513,34 @@ const selfShipCmd = defineCommand({
       process.exit(SHIP_EXIT.deploy_failed)
       return
     }
-    const { loadavg, cpus } = await import('node:os')
-    const { readApiInfo } = await import('../../lib/api-info')
-    const { makeDaemonClient } = await import('../self-change/daemon-client')
-    const { deployFromRepo, makeSelftest } = await import('../self-change/index')
-    const { spawnCollect } = await import('../self-change/runner')
-    const { SELF_CHANGE_DEFAULTS } = await import('../self-change/policy')
-    const { defaultSelftestDeps, runChatSelftest, runWorkbenchSelftest } = await import('../selftest')
-    const daemon = makeDaemonClient({ readApiInfo: () => readApiInfo(STATE_DIR), fetch })
-    const agent = loadAgentConfig(STATE_DIR).self_change
-    const { spawnSync } = await import('node:child_process')
-    const { defaultDeployTaskGate } = await import('../deploy-task-gate')
-    const taskOptions = { waitTasks: Boolean(args['wait-tasks']), force: Boolean(args.force) }
-    const git = (...a: string[]) => spawnSync('git', a, { cwd: SOURCE_REPO_ROOT, encoding: 'utf8', timeout: 60_000, windowsHide: true })
-    const res = await runShip({
-      tree: () => {
-        // fetch 不成就用本地的 origin/dev(多半旧一点 ⇒ 对不上就拒,宁严勿松)。
-        git('fetch', '-q', 'origin', 'dev')
-        const dev = git('rev-parse', '--verify', '-q', 'origin/dev')
-        return { dirty: git('status', '--porcelain').stdout ?? '', head: (git('rev-parse', 'HEAD').stdout ?? '').trim(), devHead: dev.status === 0 ? dev.stdout.trim() : null }
-      },
-      load: () => ({ load1: loadavg()[0] ?? 0, cpus: cpus().length }),
-      guard: () => daemon.guard(),
-      taskGate: () => defaultDeployTaskGate(STATE_DIR, taskOptions),
-      build: async () => {
-        const r = await spawnCollect('bun', ['run', 'build-sidecar'], { cwd: join(SOURCE_REPO_ROOT, 'apps', 'desktop'), env: process.env, timeoutMs: SELF_CHANGE_DEFAULTS.tests_timeout_ms })
-        return { ok: r.code === 0, detail: (r.stderr || r.stdout).trim().split('\n').slice(-20).join('\n') }
-      },
-      deploy: mode => deployFromRepo(STATE_DIR, SOURCE_REPO_ROOT, mode, taskOptions),
-      // 跟自改同一套自检、同一份配置(agent-config 的 self_change.selftest_executor / selftest_provider)。
-      selftest: makeSelftest({
-        selftestExecutor: agent?.selftest_executor ?? SELF_CHANGE_DEFAULTS.selftest_executor,
-        selftestProvider: agent?.selftest_provider ?? SELF_CHANGE_DEFAULTS.selftest_provider,
-      }, {
-        workbench: o => runWorkbenchSelftest(defaultSelftestDeps(STATE_DIR), o),
-        chat: o => runChatSelftest(defaultSelftestDeps(STATE_DIR), o),
-      }),
-      sleep: ms => new Promise(r => setTimeout(r, ms)),
-      now: () => Date.now(),
-      log: line => console.error(line),
-    }, { waitMin, maxLoadPerCpu, skipBuild: Boolean(args['skip-build']), allowOffDev: Boolean(args['allow-off-dev']) })
+    const { shipFromRepo } = await import('../self-ship-runtime')
+    const res = await shipFromRepo({
+      stateDir: STATE_DIR,
+      repoRoot: SOURCE_REPO_ROOT,
+      taskOptions: { waitTasks: Boolean(args['wait-tasks']), force: Boolean(args.force) },
+      shipOptions: { waitMin, maxLoadPerCpu, skipBuild: Boolean(args['skip-build']), allowOffDev: Boolean(args['allow-off-dev']) },
+    })
     ;(res.exitCode === SHIP_EXIT.shipped ? console.log : console.error)(res.message)
     process.exit(res.exitCode)
+  },
+})
+
+const selfAutoshipCmd = defineCommand({
+  meta: { name: 'autoship', description: `按 dev 的 CI 与本机状态自动部署一轮（仅 macOS）。${AUTOSHIP_EXIT_HELP}` },
+  args: {
+    enable: { type: 'boolean', description: '开启自动部署' },
+    disable: { type: 'boolean', description: '关闭自动部署' },
+    status: { type: 'boolean', description: '查看上轮结论与停机状态' },
+    unhalt: { type: 'boolean', description: '解除自动部署停机并清零连续故障次数' },
+  },
+  async run({ args }) {
+    const { runAutoshipCommand } = await import('../self-autoship')
+    const { defaultAutoshipDeps } = await import('../self-autoship-runtime')
+    const result = await runAutoshipCommand(defaultAutoshipDeps(STATE_DIR, isCompiledBundle() ? null : SOURCE_REPO_ROOT), {
+      enable: args.enable, disable: args.disable, status: args.status, unhalt: args.unhalt,
+    })
+    ;(result.exitCode === 0 ? console.log : console.error)(result.message)
+    process.exitCode = result.exitCode
   },
 })
 
@@ -729,5 +738,5 @@ const selfAskCmd = defineCommand({
 
 export const selfCmd = defineCommand({
   meta: { name: 'self', description: '自维护:部署自身、让 CC 自己改自己（仅 macOS launchd；见 docs/maintainer/deploy.md 与 self-change.md）' },
-  subCommands: { change: selfChangeCmd, deploy: selfDeployCmd, ship: selfShipCmd, soak: selfSoakCmd, discover: selfDiscoverCmd, plan: selfPlanCmd, ask: selfAskCmd },
+  subCommands: { change: selfChangeCmd, deploy: selfDeployCmd, ship: selfShipCmd, autoship: selfAutoshipCmd, soak: selfSoakCmd, discover: selfDiscoverCmd, plan: selfPlanCmd, ask: selfAskCmd },
 })

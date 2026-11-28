@@ -405,6 +405,7 @@ export interface InternalApiDeps {
    * flushes first); launchd/systemd KeepAlive respawns. 503 when unwired.
    */
   requestRestart?: () => void
+  deployReadiness?: () => { compiled: boolean; execPath: string; stateDir: string; parentPid: number; bootAt: string; idle: boolean }
   /** Optional log hook so api activity surfaces in channel.log. */
   /**
    * Optional `fields` arg lands in channel.log.jsonl when wired (the

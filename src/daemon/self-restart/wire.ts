@@ -81,6 +81,10 @@ export interface SelfRestartDeps {
   lastPollSuccessAgoMs: (nowMs: number) => number | null
 }
 
+export function hasRestartWork(deps: Pick<SelfRestartDeps, 'anyInFlight' | 'busy'>): boolean {
+  return deps.anyInFlight() || deps.busy()
+}
+
 export function makeSelfRestartCheck(deps: SelfRestartDeps): () => Promise<void> {
   const readHead = deps.readHead ?? readGitHead
   const readLockBlob = deps.readLockBlob ?? readGitLockfileBlob
@@ -122,7 +126,7 @@ export function makeSelfRestartCheck(deps: SelfRestartDeps): () => Promise<void>
       if (nowMs - deps.bootAtMs < BOOT_GRACE_MS) return
       const ago = deps.lastPollSuccessAgoMs(nowMs)
       const fresh = ago !== null && ago <= POLL_FRESH_MS
-      const idle = !deps.anyInFlight() && !deps.busy() && deps.quietFor(nowMs) >= IDLE_QUIET_MS && fresh
+      const idle = !hasRestartWork(deps) && deps.quietFor(nowMs) >= IDLE_QUIET_MS && fresh
       if (!idle) return
 
       if (deps.loadedHead === null) {
@@ -134,7 +138,7 @@ export function makeSelfRestartCheck(deps: SelfRestartDeps): () => Promise<void>
         if (!execIdentityChanged(deps.bootExecIdentity, current)) return
         const nowMs2 = deps.now()
         const ago2 = deps.lastPollSuccessAgoMs(nowMs2)
-        if (deps.anyInFlight() || deps.busy() || deps.quietFor(nowMs2) < IDLE_QUIET_MS || ago2 === null || ago2 > POLL_FRESH_MS) {
+        if (hasRestartWork(deps) || deps.quietFor(nowMs2) < IDLE_QUIET_MS || ago2 === null || ago2 > POLL_FRESH_MS) {
           logStaleBlocked('recheck_raced', nowMs2)
           return
         }
@@ -178,7 +182,7 @@ export function makeSelfRestartCheck(deps: SelfRestartDeps): () => Promise<void>
       // 拦下。
       const nowMs2 = deps.now()
       const ago2 = deps.lastPollSuccessAgoMs(nowMs2)
-      if (deps.anyInFlight() || deps.busy() || deps.quietFor(nowMs2) < IDLE_QUIET_MS || ago2 === null || ago2 > POLL_FRESH_MS) {
+      if (hasRestartWork(deps) || deps.quietFor(nowMs2) < IDLE_QUIET_MS || ago2 === null || ago2 > POLL_FRESH_MS) {
         logStaleBlocked('recheck_raced', nowMs2)
         return
       }

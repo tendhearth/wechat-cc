@@ -1,5 +1,6 @@
+import { loadAutoshipConfig, patchAutoshipConfig } from './autoship-config'
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { PROVIDER_IDS } from './provider-ids'
@@ -897,6 +898,24 @@ describe('resolveForwardBudget', () => {
 })
 
 describe('self_change', () => {
+  it('保留旧版 self_change 的停机与配置，模型写回和独立自动部署开关互不覆盖', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cc-config-autoship-'))
+    try {
+      const legacy = { halted_at: 1700000000000, halt_reason: '人工停机', fail_streak: 2, implement_budget_usd: 20, repo_url: 'git@example.test:cc' }
+      const path = join(dir, 'agent-config.json')
+      writeFileSync(path, JSON.stringify({ provider: 'claude', self_change: legacy }))
+      patchAutoshipConfig(dir, { auto_ship: true, auto_ship_interval_min: 9, repo_url: legacy.repo_url })
+      expect(loadAgentConfig(dir).self_change).toEqual(legacy)
+      saveAgentConfig(dir, { ...loadAgentConfig(dir), model: 'claude-sonnet-4.6' })
+      expect(loadAgentConfig(dir).self_change).toEqual(legacy)
+      expect(loadAutoshipConfig(dir)).toEqual({ auto_ship: true, auto_ship_interval_min: 9, repo_url: legacy.repo_url })
+      patchAutoshipConfig(dir, { auto_ship: false })
+      expect(loadAgentConfig(dir).self_change).toEqual(legacy)
+      expect(loadAutoshipConfig(dir)).toMatchObject({ auto_ship: false, auto_ship_interval_min: 9 })
+      if (process.platform !== 'win32') expect(statSync(join(dir, 'self-change', 'autoship-config.json')).mode & 0o777).toBe(0o600)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
   it('合法的整块原样透传', () => {
     const dir = mkdtempSync(join(tmpdir(), 'agent-config-self-change-'))
     try {

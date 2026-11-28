@@ -60,7 +60,7 @@ describe('makeSelfChangeSpawner', () => {
   beforeEach(() => {
     stateDir = mkdtempSync(join(tmpdir(), 'self-change-spawn-'))
     unref = vi.fn()
-    spawn = vi.fn(() => ({ pid: 4242, unref }))
+    spawn = vi.fn(() => ({ pid: 4242, unref, once: vi.fn() }))
     log = vi.fn()
   })
   afterEach(() => { rmSync(stateDir, { recursive: true, force: true }) })
@@ -119,6 +119,22 @@ describe('makeSelfChangeSpawner', () => {
     expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined()
     // 供应商鉴权照留 —— 执行者要用。
     expect(env.ANTHROPIC_API_KEY).toBe('keep')
+  })
+
+  it('autoship detached 启动，只传显式状态目录和经过过滤的环境', () => {
+    const once = vi.fn()
+    spawn.mockReturnValueOnce({ pid: 4242, unref, once })
+    const result = make().autoship('2026-11-27T00:00:00.000Z')
+    expect(result).toEqual({ ok: true, pid: 4242, alive: expect.any(Function) })
+    expect(result.alive?.()).toBe(true)
+    once.mock.calls.find(([event]) => event === 'exit')![1]()
+    expect(result.alive?.()).toBe(false)
+    const [cmd, args, opts] = spawn.mock.calls[0]!
+    expect(cmd).toBe('/usr/local/bin/bun')
+    expect(args).toEqual(['/repo/cli.ts', 'self', 'autoship'])
+    expect(opts).toMatchObject({ detached: true, stdio: 'ignore', windowsHide: true, env: { WECHAT_STATE_DIR: stateDir, WECHAT_CC_AUTOSHIP_DAEMON_PID: String(process.pid), WECHAT_CC_AUTOSHIP_DAEMON_BOOT: '2026-11-27T00:00:00.000Z' } })
+    expect(opts.env.WECHAT_TOKEN).toBeUndefined()
+    expect(unref).toHaveBeenCalledOnce()
   })
 
   it('解析不出命令行 ⇒ 不 spawn,给一句人能看懂的理由', () => {

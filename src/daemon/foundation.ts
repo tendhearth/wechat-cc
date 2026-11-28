@@ -196,4 +196,5 @@ export type Foundation = Awaited<ReturnType<typeof openFoundation>> & {
   desktopNotify?: (title: string, body: string) => Promise<boolean>
   /** daemon 自己要求的优雅重启(运维 POST /v1/daemon/restart、空闲加载新代码 ……)。 */
   requestRestart(reason: string): void
+  isStopping?(): boolean
 }

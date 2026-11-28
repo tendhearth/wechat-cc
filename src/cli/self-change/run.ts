@@ -1,3 +1,4 @@
+import { DEPLOYMENT_BUSY } from '../deployment-transaction'
 /**
  * run.ts —— 把十二个步骤串起来的那台机器。
  *
@@ -151,6 +152,7 @@ export async function runSelfChange(
   // 第一道门(`result === null`)直接把人挡在外面,拍不了板,又只能等超时。
   // result / error 是**上一次的结局**,这一次还没有结局;approval.decision 同理
   // (拿上一轮的 timeout 当这一轮的答案,会让轮询以为已经落定了)。
+  const restartAtDeploy = RESTART_AT_DEPLOY.includes(s.result ?? '')
   if (s.result !== null || s.error !== null) {
     deps.log(`[self-change] #${s.id} 从 ${s.step} 接着跑(上次收在 ${s.result ?? '(没记结局)'})`)
     // 上次收在「机器上跑的不是这条改动」⇒ 这一次必须从 deploy 重来。
@@ -160,7 +162,7 @@ export async function runSelfChange(
     // 流水线就报「部署:绿」并把 fail_streak 清零。步退回 deploy 才是重新构建、
     // 重新部署、再自检。(rollBack 已经就地退过一次;这里兜住「盘上是旧状态」
     // 和 deploy 自己失败后停在别处的情况。)
-    if (RESTART_AT_DEPLOY.includes(s.result ?? '')) s.step = 'deploy'
+    if (restartAtDeploy && (s.step !== 'selftest' || !deps.lockDeployment)) s.step = 'deploy'
     s.result = null
     s.error = null
     s.approval.decision = null
@@ -209,27 +211,55 @@ export async function runSelfChange(
     return null
   }
 
-  while (s.step !== 'done') {
-    save()
-    const step = steps[s.step]
-    let outcome
-    try {
-      outcome = await step(s, deps)
-    } catch (err) {
-      // 步骤自己没接住的异常(假件说谎、磁盘满、bug)。当失败记,原文留在 state 里。
-      const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}`.trim() : String(err)
-      return await finish('crashed', message)
-    }
+  let deployment: { release(): void } | undefined
+  try {
+    while (s.step !== 'done') {
+      if (!deployment && (s.step === 'deploy' || s.step === 'selftest') && deps.lockDeployment) {
+        const held = deps.lockDeployment()
+        if ('busy' in held) return await finish('deploy_tasks_blocked', DEPLOYMENT_BUSY)
+        deployment = held
+        const pending = deps.pendingDeployment?.()
+        if (pending) return await finish('deploy_tasks_blocked', pending)
+        if (s.step === 'selftest') {
+          if (!restartAtDeploy) return await finish('deploy_tasks_blocked',
+            `上次部署未在同一事务内完成自检。请手动验收或回滚，再用 self change --abandon ${s.id} 归档这条已合入的自改。`)
+          s.step = 'deploy'
+        }
+      }
+      save()
+      const step = steps[s.step]
+      let outcome
+      try {
+        outcome = await step(s, deps)
+      } catch (err) {
+        // 步骤自己没接住的异常(假件说谎、磁盘满、bug)。当失败记,原文留在 state 里。
+        const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}`.trim() : String(err)
+        return await finish('crashed', message)
+      }
 
-    if (!outcome.ok && outcome.fixRound) {
-      const ended = await fixRound(outcome.fixRound, outcome.fixPrompt ?? '', outcome.detail ?? '')
-      if (ended) return ended
-      continue
-    }
-    if (!outcome.ok) return await finish(outcome.fail ?? 'unknown_failure', outcome.detail ?? '')
+      if (!outcome.ok && outcome.fixRound) {
+        const ended = await fixRound(outcome.fixRound, outcome.fixPrompt ?? '', outcome.detail ?? '')
+        if (ended) return ended
+        continue
+      }
+      if (!outcome.ok) {
+        if (deployment && s.merge.sha && HALTABLE.includes(outcome.fail ?? '')) {
+          try { deps.recordDeployFailure?.(s.merge.sha, step === steps.selftest ? 'selftest' : 'deploy') }
+          catch (err) { deps.log(`[self-change] 无法记录失败 tree：${String(err)}`) }
+        }
+        return await finish(outcome.fail ?? 'unknown_failure', outcome.detail ?? '')
+      }
 
-    s.step = outcome.next ?? 'done'
-    save()
+      s.step = outcome.next ?? 'done'
+      save()
+      if (s.step === 'report') {
+        if (deployment) deps.finishDeployment?.()
+        deployment?.release()
+        deployment = undefined
+      }
+    }
+  } finally {
+    deployment?.release()
   }
 
   s.result = 'done'

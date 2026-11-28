@@ -53,7 +53,7 @@ export interface ShipOpts {
 
 export const SHIP_EXIT = { shipped: 0, deploy_failed: 1, selftest_red: 2, busy: 3, build_failed: 4, unguarded: 5, tree_unfit: 6 } as const
 
-export interface ShipResult { exitCode: number; message: string; version?: string }
+export interface ShipResult { exitCode: number; message: string; version?: string; blocked?: SelfDeployResult['blocked']; ledgerError?: string }
 
 export const DEFAULT_MAX_LOAD_PER_CPU = 1.0
 const LOAD_POLL_MS = 60_000
@@ -78,6 +78,10 @@ export async function waitForQuietMachine(
 function failedChecks(r: SelftestReport): string {
   const bad = r.checks.filter(c => !c.ok).map(c => c.name)
   return `${r.kind}(${r.target})${bad.length ? `:${bad.join('、')}` : ''}`
+}
+
+function failedDeploy(err: unknown): SelfDeployResult {
+  return { ok: false, exitCode: 1, steps: [], diagnostics: err instanceof Error ? err.message : String(err) }
 }
 
 export async function runShip(deps: ShipDeps, opts: ShipOpts = {}): Promise<ShipResult> {
@@ -112,22 +116,33 @@ export async function runShip(deps: ShipDeps, opts: ShipOpts = {}): Promise<Ship
   }
 
   deps.log('部署…')
-  const d = await deps.deploy('deploy')
+  const d = await deps.deploy('deploy').catch(err => failedDeploy(err))
+  if (d.blocked) {
+    return { exitCode: d.blocked === 'target' ? SHIP_EXIT.tree_unfit : SHIP_EXIT.deploy_failed, blocked: d.blocked, message: d.steps.map(s => s.detail).filter(Boolean).join('\n') }
+  }
   if (!d.ok) {
     const steps = d.steps.filter(s => !s.ok).map(s => `- ${s.name}: ${s.detail ?? ''}`).join('\n')
     return { exitCode: SHIP_EXIT.deploy_failed, message: `self deploy 没过${d.rolledBack ? '(已自动回滚)' : ''}:\n${[d.diagnostics ?? '', steps].filter(Boolean).join('\n')}` }
   }
 
   deps.log(`已部署 ${d.version ?? ''},跑自检…`)
-  const t = await deps.selftest()
-  if (!t.workbench.ok || !t.chat.ok) {
-    const red = [t.workbench, t.chat].filter(r => !r.ok).map(failedChecks).join(';')
-    const rb = await deps.deploy('rollback')
+  let failure: { detail: string } | null = null
+  try {
+    const result = await deps.selftest()
+    const red = [result.workbench, result.chat].filter(r => !r.ok)
+    if (red.length) failure = { detail: red.map(failedChecks).join('、') }
+  } catch (err) {
+    const detail = err instanceof Error ? err.message || err.name : String(err)
+    failure = { detail: detail || '自检拒绝，未提供原因' }
+  }
+  if (failure) {
+    const red = failure.detail
+    const rb = await deps.deploy('rollback').catch(err => failedDeploy(err))
     return {
       exitCode: SHIP_EXIT.selftest_red,
       message: rb.ok
         ? `自检红了(${red}),已回滚到上一版。dev 上的代码没动,要人看。`
-        : `自检红了(${red}),**回滚也没成**:机器上跑的还是新版,要人马上看。\n${rb.diagnostics ?? ''}`,
+        : `自检红了(${red}),**回滚也没成**:需核对当前版本,要人马上看。\n${rb.diagnostics ?? ''}`,
     }
   }
 

@@ -16,6 +16,8 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { homedir, hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { makeDaemonClient } from '../../cli/self-change/daemon-client'
+import { readApiInfo } from '../../lib/api-info'
 import { parsePermissionRequest } from '../../cli/hook'
 import { approvalLookupReply, parseApprovalLookupReply, CliSessionRow, makeProtocolClient, MatterDetail, PERMISSION_SNAPSHOT_NOTICE, PlacesResponse, type CliSessionRowT, type NotebookPageResponseT } from '@wechat-cc/protocol'
 import { WECHAT_PERMISSION_INCOMPLETE } from '../../ports/wechat'
@@ -361,6 +363,14 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(texts(out, d.owner).filter(t => t.includes('主人好,我在。'))).toHaveLength(1)
   })
 
+  it('deployment readiness identifies the source-mode daemon over the file-token health interface', async () => {
+    const daemon = makeDaemonClient({ readApiInfo: () => readApiInfo(d.stateDir), fetch })
+    expect(await daemon.deployReadiness()).toMatchObject({
+      compiled: false, stateDir: d.stateDir, pid: expect.any(Number), parentPid: expect.any(Number), bootAt: expect.any(String),
+      idle: expect.any(Boolean), guarded: true,
+    })
+  })
+
   it('memory: boot imported the memory files and facts.db into the main db, and the session prompt carries the owner\'s memory', () => {
     const rows = d.query<{ doc: string; n: number }>('SELECT doc, COUNT(*) AS n FROM memory_facts WHERE chat_id = ? GROUP BY doc', d.owner)
     const byDoc = Object.fromEntries(rows.map(r => [r.doc, r.n]))
@@ -514,6 +524,8 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const card = await d.waitForOutbound(m => texts(m, d.owner).some(isCard), 15_000)
     expect(texts(card, d.owner).find(isCard)).toContain('rm -rf build')
     expect(codexDecision).toBeUndefined()
+    const daemon = makeDaemonClient({ readApiInfo: () => readApiInfo(d.stateDir), fetch })
+    expect(await daemon.deployReadiness()).toMatchObject({ idle: false })
     d.sendText(d.owner, 'y')
     await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('删好了。')), 15_000)
     expect(codexDecision).toBe('accept')

@@ -88,11 +88,13 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
     ...matterActionRoutes(deps),
     ...connectionsRoutes(deps),
     ...cliSetupRoutes(deps),
-    'GET /v1/health': (_q, _body, caller) => ({
+    'GET /v1/health': (q, _body, caller) => ({
       status: 200,
       body: {
         ok: true,
         daemon_pid: deps.daemonPid,
+        ...(caller?.origin === 'file' && deps.deployReadiness && q.get('check') === 'deploy'
+          ? { deploy: deps.deployReadiness() } : {}),
         // Ops fields for the admin self-diagnosis tool: is the turn store
         // wired, how many sessions are live, is the poll-cycle heartbeat
         // fresh (false ⇒ the daemon may be wedged / not serving).
